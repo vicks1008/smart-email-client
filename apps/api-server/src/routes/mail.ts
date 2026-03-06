@@ -37,6 +37,12 @@ export async function registerMailRoutes(app: FastifyInstance) {
             createdAt: "desc"
           },
           take: 3
+        },
+        importJobs: {
+          orderBy: {
+            createdAt: "desc"
+          },
+          take: 3
         }
       }
     });

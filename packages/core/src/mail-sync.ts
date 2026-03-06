@@ -1,4 +1,5 @@
 import {
+  AccountProvider,
   AccountStatus,
   MailboxKind,
   SyncJobStatus,
@@ -33,6 +34,26 @@ type GraphMessagesResponse = {
 type RecipientSummary = {
   address: string;
   name: string;
+};
+
+export type NormalizedMessage = {
+  externalMessageId: string;
+  externalConversationId: string;
+  internetMessageId?: string | null;
+  subject: string;
+  fromName?: string | null;
+  fromAddress?: string | null;
+  toRecipients: RecipientSummary[];
+  ccRecipients: RecipientSummary[];
+  receivedAt: Date;
+  sentAt?: Date | null;
+  bodyPreview: string;
+  bodyText: string;
+  bodyHtml?: string | null;
+  webLink?: string | null;
+  importance?: string | null;
+  isRead?: boolean;
+  hasAttachments?: boolean;
 };
 
 function normalizeRecipients(recipients: GraphRecipient[] | null | undefined) {
@@ -113,6 +134,10 @@ export async function ensureFreshAccessToken(accountId: string) {
     !account.tokenExpiresAt || account.tokenExpiresAt.getTime() - Date.now() < 5 * 60 * 1000;
 
   if (!expiresSoon) {
+    if (!account.accessToken) {
+      throw new Error(`Account ${account.email} does not have an active access token.`);
+    }
+
     return account.accessToken;
   }
 
@@ -193,17 +218,60 @@ function threadParticipants(message: GraphMessage) {
   return recipients;
 }
 
-async function upsertMessage(mailbox: Mailbox, message: GraphMessage) {
-  const conversationId = message.conversationId ?? message.id;
-  const receivedAt = new Date(message.receivedDateTime ?? Date.now());
+function normalizedParticipants(message: Pick<NormalizedMessage, "toRecipients" | "ccRecipients" | "fromName" | "fromAddress">) {
+  return uniqueRecipients([
+    ...message.toRecipients,
+    ...message.ccRecipients,
+    ...(message.fromAddress
+      ? [
+          {
+            address: message.fromAddress,
+            name: message.fromName ?? message.fromAddress
+          }
+        ]
+      : [])
+  ]);
+}
+
+export function previewFromText(text: string) {
+  return text.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+export function normalizeGraphMessage(message: GraphMessage): NormalizedMessage {
+  const bodyHtml = message.body?.contentType === "html" ? message.body.content ?? "" : null;
+  const bodyText = bodyHtml ? htmlToText(bodyHtml) : htmlToText(message.body?.content);
+
+  return {
+    externalMessageId: message.id,
+    externalConversationId: message.conversationId ?? message.id,
+    internetMessageId: message.internetMessageId ?? null,
+    subject: message.subject?.trim() || "(no subject)",
+    fromName: message.from?.emailAddress?.name ?? null,
+    fromAddress: message.from?.emailAddress?.address ?? null,
+    toRecipients: normalizeRecipients(message.toRecipients),
+    ccRecipients: normalizeRecipients(message.ccRecipients),
+    receivedAt: new Date(message.receivedDateTime ?? Date.now()),
+    sentAt: message.sentDateTime ? new Date(message.sentDateTime) : null,
+    bodyPreview: message.bodyPreview ?? previewFromText(bodyText),
+    bodyText,
+    bodyHtml,
+    webLink: message.webLink ?? null,
+    importance: message.importance ?? null,
+    isRead: message.isRead ?? false,
+    hasAttachments: message.hasAttachments ?? false
+  };
+}
+
+export async function ingestNormalizedMessage(mailbox: Mailbox, message: NormalizedMessage) {
+  const receivedAt = message.receivedAt;
   const subject = message.subject?.trim() || "(no subject)";
-  const participants = threadParticipants(message);
+  const participants = normalizedParticipants(message);
 
   const thread = await prisma.thread.upsert({
     where: {
       mailboxId_externalConversationId: {
         mailboxId: mailbox.id,
-        externalConversationId: conversationId
+        externalConversationId: message.externalConversationId
       }
     },
     update: {
@@ -213,35 +281,31 @@ async function upsertMessage(mailbox: Mailbox, message: GraphMessage) {
     },
     create: {
       mailboxId: mailbox.id,
-      externalConversationId: conversationId,
+      externalConversationId: message.externalConversationId,
       subject,
       participants: participants,
       lastMessageAt: receivedAt
     }
   });
 
-  const from = message.from?.emailAddress;
-  const bodyHtml = message.body?.contentType === "html" ? message.body.content ?? "" : null;
-  const bodyText = bodyHtml ? htmlToText(bodyHtml) : htmlToText(message.body?.content);
-
   await prisma.message.upsert({
     where: {
       mailboxId_externalMessageId: {
         mailboxId: mailbox.id,
-        externalMessageId: message.id
+        externalMessageId: message.externalMessageId
       }
     },
     update: {
       subject,
-      fromName: from?.name ?? null,
-      fromAddress: from?.address ?? null,
-      toRecipients: normalizeRecipients(message.toRecipients),
-      ccRecipients: normalizeRecipients(message.ccRecipients),
+      fromName: message.fromName ?? null,
+      fromAddress: message.fromAddress ?? null,
+      toRecipients: message.toRecipients,
+      ccRecipients: message.ccRecipients,
       receivedAt,
-      sentAt: message.sentDateTime ? new Date(message.sentDateTime) : null,
-      bodyPreview: message.bodyPreview ?? "",
-      bodyText,
-      bodyHtml,
+      sentAt: message.sentAt ?? null,
+      bodyPreview: message.bodyPreview,
+      bodyText: message.bodyText,
+      bodyHtml: message.bodyHtml ?? null,
       webLink: message.webLink ?? null,
       importance: message.importance ?? null,
       isRead: message.isRead ?? false,
@@ -252,22 +316,30 @@ async function upsertMessage(mailbox: Mailbox, message: GraphMessage) {
     create: {
       mailboxId: mailbox.id,
       threadId: thread.id,
-      externalMessageId: message.id,
+      externalMessageId: message.externalMessageId,
       subject,
-      fromName: from?.name ?? null,
-      fromAddress: from?.address ?? null,
-      toRecipients: normalizeRecipients(message.toRecipients),
-      ccRecipients: normalizeRecipients(message.ccRecipients),
+      fromName: message.fromName ?? null,
+      fromAddress: message.fromAddress ?? null,
+      toRecipients: message.toRecipients,
+      ccRecipients: message.ccRecipients,
       receivedAt,
-      sentAt: message.sentDateTime ? new Date(message.sentDateTime) : null,
-      bodyPreview: message.bodyPreview ?? "",
-      bodyText,
-      bodyHtml,
+      sentAt: message.sentAt ?? null,
+      bodyPreview: message.bodyPreview,
+      bodyText: message.bodyText,
+      bodyHtml: message.bodyHtml ?? null,
       webLink: message.webLink ?? null,
       importance: message.importance ?? null,
       isRead: message.isRead ?? false,
       hasAttachments: message.hasAttachments ?? false,
       internetMessageId: message.internetMessageId ?? null
+    }
+  });
+
+  await prisma.thread.update({
+    where: { id: thread.id },
+    data: {
+      lastMessageAt:
+        receivedAt > thread.lastMessageAt ? receivedAt : thread.lastMessageAt
     }
   });
 }
@@ -295,6 +367,35 @@ async function refreshUnreadCounts(mailboxId: string) {
       })
     )
   );
+}
+
+export async function ensureArchiveAccount(input: {
+  emailAddress: string;
+  displayName?: string | null;
+}) {
+  const normalizedEmail = input.emailAddress.trim().toLowerCase();
+  const externalUserId = `archive:${normalizedEmail}`;
+
+  return prisma.account.upsert({
+    where: {
+      provider_externalUserId: {
+        provider: AccountProvider.ARCHIVE,
+        externalUserId
+      }
+    },
+    update: {
+      email: normalizedEmail,
+      displayName: input.displayName ?? normalizedEmail,
+      status: AccountStatus.ACTIVE
+    },
+    create: {
+      provider: AccountProvider.ARCHIVE,
+      externalUserId,
+      email: normalizedEmail,
+      displayName: input.displayName ?? normalizedEmail,
+      status: AccountStatus.ACTIVE
+    }
+  });
 }
 
 export async function syncMailbox(mailboxId: string) {
@@ -332,7 +433,7 @@ export async function syncMailbox(mailboxId: string) {
   });
 
   for (const message of orderedMessages) {
-    await upsertMessage(mailbox, message);
+    await ingestNormalizedMessage(mailbox, normalizeGraphMessage(message));
   }
 
   await refreshUnreadCounts(mailbox.id);
@@ -406,6 +507,7 @@ export async function scheduleDueSyncs() {
   const mailboxes = await prisma.mailbox.findMany({
     where: {
       account: {
+        provider: AccountProvider.MICROSOFT,
         status: AccountStatus.ACTIVE
       },
       OR: [
@@ -433,6 +535,10 @@ export async function hydratePrimaryMailbox(accountId: string) {
 
   if (!account) {
     throw new Error(`Account ${accountId} was not found.`);
+  }
+
+  if (!account.accessToken) {
+    throw new Error(`Account ${account.email} does not have a usable Microsoft access token.`);
   }
 
   const profile = await getMicrosoftProfile(account.accessToken);

@@ -214,6 +214,7 @@ a {
   cursor: pointer;
 }
 
+.mailbox-row,
 .mailbox-button .mailbox-row,
 .thread-row {
   border-radius: 22px;
@@ -320,6 +321,10 @@ a {
   border: 1px solid rgba(29, 36, 51, 0.12);
   padding: 12px 14px;
   background: rgba(255, 255, 255, 0.86);
+}
+
+input[type="file"].input {
+  padding: 10px 12px;
 }
 
 .muted {

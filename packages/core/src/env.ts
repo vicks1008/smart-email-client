@@ -19,7 +19,8 @@ const envSchema = z.object({
   DASHBOARD_URL: z.string().url().default("http://localhost:3000"),
   API_BASE_URL: z.string().url().default("http://localhost:4000"),
   MAIL_SYNC_INTERVAL_SECONDS: z.coerce.number().int().positive().default(120),
-  MAIL_SYNC_MESSAGE_LIMIT: z.coerce.number().int().min(1).max(100).default(50)
+  MAIL_SYNC_MESSAGE_LIMIT: z.coerce.number().int().min(1).max(100).default(50),
+  OLM_CONVERTER_PYTHON: optionalString
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

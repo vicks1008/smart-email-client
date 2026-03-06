@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Archive,
   CheckCircle2,
   ChevronRight,
   Flag,
@@ -9,7 +10,8 @@ import {
   MailPlus,
   RefreshCcw,
   ShieldAlert,
-  Sparkles
+  Sparkles,
+  Upload
 } from "lucide-react";
 import { startTransition, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -17,11 +19,14 @@ import { toast } from "sonner";
 import {
   addSharedMailbox,
   fetchAccounts,
+  fetchImports,
   fetchThread,
   fetchThreads,
   getMicrosoftConnectUrl,
   queueSync,
+  uploadArchive,
   type AccountSummary,
+  type ImportJobSummary,
   type ThreadDetail,
   type ThreadSummary
 } from "../lib/api";
@@ -48,14 +53,19 @@ export function MailApp() {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedMailboxId, setSelectedMailboxId] = useState<string | null>(null);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [imports, setImports] = useState<ImportJobSummary[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedThread, setSelectedThread] = useState<ThreadDetail | null>(null);
   const [search, setSearch] = useState("");
   const [sharedMailboxEmail, setSharedMailboxEmail] = useState("");
   const [sharedMailboxName, setSharedMailboxName] = useState("");
+  const [importMailboxEmail, setImportMailboxEmail] = useState("");
+  const [importMailboxName, setImportMailboxName] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSyncPending, startSyncTransition] = useTransition();
   const [isMailboxPending, startMailboxTransition] = useTransition();
+  const [isImportPending, startImportTransition] = useTransition();
 
   const selectedAccount = useMemo(
     () => accounts.find((account) => account.id === selectedAccountId) ?? null,
@@ -109,13 +119,21 @@ export function MailApp() {
   useEffect(() => {
     if (!selectedMailboxId) {
       setThreads([]);
+      setImports([]);
       setSelectedThreadId(null);
       setSelectedThread(null);
       return;
     }
 
     void refreshThreads(selectedMailboxId);
+    void refreshImports(selectedMailboxId, selectedAccountId ?? undefined);
   }, [selectedMailboxId]);
+
+  useEffect(() => {
+    if (!selectedMailboxId && selectedAccountId) {
+      void refreshImports(undefined, selectedAccountId);
+    }
+  }, [selectedAccountId, selectedMailboxId]);
 
   useEffect(() => {
     if (!selectedThreadId) {
@@ -174,9 +192,23 @@ export function MailApp() {
     }
   }
 
+  async function refreshImports(mailboxId?: string, accountId?: string) {
+    try {
+      const data = await fetchImports(mailboxId, accountId);
+      setImports(data.imports);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load archive imports.");
+    }
+  }
+
   async function handleManualSync() {
     if (!selectedAccount) {
       toast.error("Connect an account before syncing.");
+      return;
+    }
+
+    if (selectedAccount.provider !== "MICROSOFT") {
+      toast.error("Archive-only accounts do not support live OAuth sync.");
       return;
     }
 
@@ -218,6 +250,41 @@ export function MailApp() {
     });
   }
 
+  async function handleArchiveImport(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!importFile) {
+      toast.error("Choose a .eml or .olm file first.");
+      return;
+    }
+
+    startImportTransition(async () => {
+      try {
+        const result = await uploadArchive({
+          file: importFile,
+          accountId: selectedAccountId ?? undefined,
+          mailboxId: selectedMailboxId ?? undefined,
+          mailboxEmail: selectedMailboxId ? undefined : importMailboxEmail || undefined,
+          mailboxDisplayName: selectedMailboxId ? undefined : importMailboxName || undefined
+        });
+
+        toast.success(
+          `Imported ${result.importJob.importedMessages} message${result.importJob.importedMessages === 1 ? "" : "s"} from ${result.importJob.format}.`
+        );
+        setImportFile(null);
+        setImportMailboxEmail("");
+        setImportMailboxName("");
+        await refreshAccounts();
+        await refreshImports(selectedMailboxId ?? undefined, selectedAccountId ?? undefined);
+        if (selectedMailboxId) {
+          await refreshThreads(selectedMailboxId);
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Archive import failed.");
+      }
+    });
+  }
+
   return (
     <main className="mail-shell">
       <div className="mail-frame">
@@ -233,11 +300,14 @@ export function MailApp() {
           </div>
 
           <p className="copy">
-            Outlook sync, shared mailbox intake, and a local-first thread workspace built for the MVP.
+            OAuth stays as the live path. Outlook archive import gives the MVP a second ingestion lane when admin approval blocks Graph access.
           </p>
 
           <div className="actions">
-            <button className="button primary" onClick={() => (window.location.href = getMicrosoftConnectUrl())}>
+            <button
+              className="button primary"
+              onClick={() => (window.location.href = getMicrosoftConnectUrl(`${window.location.origin}/mail`))}
+            >
               <MailPlus size={16} />
               Connect Microsoft
             </button>
@@ -293,7 +363,16 @@ export function MailApp() {
                     {account.status === "ACTIVE" ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
                     {account.status === "ACTIVE" ? "Active" : "Needs attention"}
                   </div>
+                  <div className="mailbox-pill">{account.provider === "MICROSOFT" ? "oauth" : "archive"}</div>
                   <div className="muted">{account.email}</div>
+                  {account.importJobs[0] ? (
+                    <div className="thread-row-meta">
+                      <span className="meta-pill">
+                        {account.importJobs[0].format.toLowerCase()} import
+                      </span>
+                      <span className="meta-pill">{formatDate(account.importJobs[0].finishedAt ?? account.importJobs[0].createdAt)}</span>
+                    </div>
+                  ) : null}
                   <div className="mailbox-list">
                     {account.mailboxes.map((mailbox) => (
                       <button
@@ -346,6 +425,84 @@ export function MailApp() {
               Add shared mailbox
             </button>
           </form>
+
+          <form className="form" onSubmit={(event) => void handleArchiveImport(event)}>
+            <div className="eyebrow">Archive Import</div>
+            <div className="copy">
+              Import `.olm` for Outlook history or `.eml` for targeted recovery. If a mailbox is selected above, the import lands there.
+            </div>
+            {!selectedMailboxId ? (
+              <>
+                <input
+                  className="input"
+                  placeholder="Mailbox email for imported archive"
+                  type="email"
+                  value={importMailboxEmail}
+                  onChange={(event) => setImportMailboxEmail(event.target.value)}
+                  required
+                />
+                <input
+                  className="input"
+                  placeholder="Optional mailbox display name"
+                  value={importMailboxName}
+                  onChange={(event) => setImportMailboxName(event.target.value)}
+                />
+              </>
+            ) : null}
+            <input
+              className="input"
+              accept=".olm,.eml,message/rfc822"
+              type="file"
+              onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
+              required
+            />
+            <button className="button secondary" disabled={isImportPending} type="submit">
+              <Upload size={16} />
+              Import archive
+            </button>
+          </form>
+
+          <div className="account-card">
+            <div className="thread-header">
+              <div>
+                <div className="eyebrow">Recent Imports</div>
+                <h2 className="title" style={{ fontSize: "1.1rem" }}>
+                  Hybrid ingest
+                </h2>
+              </div>
+              <Archive size={18} />
+            </div>
+            {imports.length > 0 ? (
+              <div className="mailbox-list">
+                {imports.map((job) => (
+                  <div key={job.id} className="mailbox-row">
+                    <div className="mailbox-name">
+                      <Archive size={16} />
+                      <strong>{job.sourceFilename}</strong>
+                    </div>
+                    <div className="thread-row-meta">
+                      <span className="mailbox-pill">{job.format.toLowerCase()}</span>
+                      <span className={`status-pill ${job.status === "FAILED" ? "warning" : "active"}`}>
+                        {job.status.toLowerCase()}
+                      </span>
+                    </div>
+                    <div className="muted">{job.mailbox.displayName}</div>
+                    <div className="thread-row-meta">
+                      <span className="meta-pill">{job.importedMessages} messages</span>
+                      <span className="meta-pill">{formatDate(job.finishedAt ?? job.createdAt)}</span>
+                    </div>
+                    {job.errorText ? <div className="muted">{job.errorText}</div> : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state">
+                <Archive size={24} />
+                <div>No archive imports yet.</div>
+                <div>Use `.olm` to backfill mailbox history while OAuth remains the live incremental path.</div>
+              </div>
+            )}
+          </div>
 
           <div className="spacer" />
         </aside>

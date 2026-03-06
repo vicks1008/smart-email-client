@@ -77,6 +77,22 @@ Phase 1 foundation is now in place:
 - Prisma mail schema shared through `packages/core`
 - Fastify API with Microsoft OAuth callback flow, account/mailbox endpoints, and thread APIs
 - polling mail worker that queues and executes inbox sync jobs
-- initial Next.js `/mail` split-view UI with connect, sync, and shared mailbox controls
+- initial Next.js `/mail` split-view UI with connect, sync, shared mailbox, and archive import controls
 
 Shared mailbox discovery is manual in this first implementation. The UI supports adding a shared mailbox address under an authenticated Microsoft account, then syncing that mailbox through Graph using `/users/{mailbox}`.
+
+## Hybrid Ingest
+
+The MVP now supports two ingestion paths into the same mailbox view:
+
+- Microsoft OAuth for live inbox sync
+- Outlook archive import via `.olm` or targeted `.eml`
+
+`.olm` extraction uses a small local Python bridge. Clone the converter locally when you want archive import enabled:
+
+```bash
+mkdir -p tools
+git clone https://github.com/PeterWarrington/olm-convert.git tools/olm-convert
+```
+
+If the converter lives on a non-default Python interpreter, set `OLM_CONVERTER_PYTHON` in `.env`.

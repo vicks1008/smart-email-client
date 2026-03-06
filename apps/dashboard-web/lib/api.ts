@@ -2,6 +2,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4
 
 export type AccountSummary = {
   id: string;
+  provider: "MICROSOFT" | "ARCHIVE";
   email: string;
   displayName: string | null;
   status: "ACTIVE" | "NEEDS_REAUTH" | "DISCONNECTED";
@@ -16,6 +17,16 @@ export type AccountSummary = {
       threads: number;
       messages: number;
     };
+  }>;
+  importJobs: Array<{
+    id: string;
+    format: "EML" | "OLM";
+    sourceFilename: string;
+    importedMessages: number;
+    status: "IN_PROGRESS" | "SUCCEEDED" | "FAILED";
+    errorText: string | null;
+    createdAt: string;
+    finishedAt: string | null;
   }>;
 };
 
@@ -75,6 +86,23 @@ export type ThreadDetail = {
   }>;
 };
 
+export type ImportJobSummary = {
+  id: string;
+  format: "EML" | "OLM";
+  sourceFilename: string;
+  importedMessages: number;
+  status: "IN_PROGRESS" | "SUCCEEDED" | "FAILED";
+  errorText: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  mailbox: {
+    id: string;
+    emailAddress: string;
+    displayName: string;
+    kind: "PRIMARY" | "SHARED";
+  };
+};
+
 async function apiFetch<T>(path: string, init?: RequestInit) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
@@ -93,8 +121,8 @@ async function apiFetch<T>(path: string, init?: RequestInit) {
   return (await response.json()) as T;
 }
 
-export function getMicrosoftConnectUrl() {
-  return `${API_BASE_URL}/v1/auth/microsoft/start?redirect=${encodeURIComponent("http://localhost:3000/mail")}`;
+export function getMicrosoftConnectUrl(redirectUrl: string) {
+  return `${API_BASE_URL}/v1/auth/microsoft/start?redirect=${encodeURIComponent(redirectUrl)}`;
 }
 
 export async function fetchAccounts() {
@@ -108,6 +136,19 @@ export async function fetchThreads(mailboxId?: string) {
 
 export async function fetchThread(threadId: string) {
   return apiFetch<{ thread: ThreadDetail }>(`/v1/threads/${threadId}`);
+}
+
+export async function fetchImports(mailboxId?: string, accountId?: string) {
+  const params = new URLSearchParams();
+  if (mailboxId) {
+    params.set("mailboxId", mailboxId);
+  }
+  if (accountId) {
+    params.set("accountId", accountId);
+  }
+
+  const query = params.toString();
+  return apiFetch<{ imports: ImportJobSummary[] }>(`/v1/imports${query ? `?${query}` : ""}`);
 }
 
 export async function queueSync(accountId: string) {
@@ -124,4 +165,43 @@ export async function addSharedMailbox(accountId: string, payload: { emailAddres
       body: JSON.stringify(payload)
     }
   );
+}
+
+export async function uploadArchive(payload: {
+  file: File;
+  accountId?: string;
+  mailboxId?: string;
+  mailboxEmail?: string;
+  mailboxDisplayName?: string;
+}) {
+  const formData = new FormData();
+  formData.append("file", payload.file);
+
+  if (payload.accountId) {
+    formData.append("accountId", payload.accountId);
+  }
+
+  if (payload.mailboxId) {
+    formData.append("mailboxId", payload.mailboxId);
+  }
+
+  if (payload.mailboxEmail) {
+    formData.append("mailboxEmail", payload.mailboxEmail);
+  }
+
+  if (payload.mailboxDisplayName) {
+    formData.append("mailboxDisplayName", payload.mailboxDisplayName);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/imports`, {
+    method: "POST",
+    body: formData
+  });
+
+  if (!response.ok) {
+    const payload = await response.text();
+    throw new Error(payload || `Request failed with ${response.status}`);
+  }
+
+  return (await response.json()) as { importJob: ImportJobSummary };
 }

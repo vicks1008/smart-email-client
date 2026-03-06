@@ -1,10 +1,12 @@
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import Fastify from "fastify";
 
 import { getEnv } from "@smart-email/core";
 
 import { registerAuthRoutes } from "./routes/auth";
 import { registerMailRoutes } from "./routes/mail";
+import { registerImportRoutes } from "./routes/imports";
 import { registerThreadRoutes } from "./routes/threads";
 
 export function buildApp() {
@@ -17,6 +19,13 @@ export function buildApp() {
     origin: [env.DASHBOARD_URL]
   });
 
+  app.register(multipart, {
+    attachFieldsToBody: false,
+    limits: {
+      fileSize: 250 * 1024 * 1024
+    }
+  });
+
   app.get("/health", async () => ({
     status: "ok",
     timestamp: new Date().toISOString()
@@ -24,6 +33,7 @@ export function buildApp() {
 
   app.register(registerAuthRoutes);
   app.register(registerMailRoutes);
+  app.register(registerImportRoutes);
   app.register(registerThreadRoutes);
 
   return app;
