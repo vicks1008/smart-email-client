@@ -85,8 +85,27 @@ Shared mailbox discovery is manual in this first implementation. The UI supports
 
 The MVP now supports two ingestion paths into the same mailbox view:
 
+- Thunderbird MCP for live local mailbox access
 - Microsoft OAuth for live inbox sync
 - Outlook archive import via `.olm` or targeted `.eml`
+
+## Thunderbird Live Source
+
+The preferred live provider is now Thunderbird through the local MCP extension. The app talks directly to Thunderbird's localhost JSON-RPC endpoint on `8765`, so it avoids the Microsoft admin-consent bottleneck when Thunderbird itself can already access the mailbox.
+
+Local setup on this machine:
+
+```bash
+git clone https://github.com/TKasperczyk/thunderbird-mcp.git tools/thunderbird-mcp
+```
+
+Then install the bundled XPI from:
+
+```text
+tools/thunderbird-mcp/dist/thunderbird-mcp.xpi
+```
+
+After installing the extension in Thunderbird, restart Thunderbird and reload `/mail`.
 
 `.olm` extraction uses a small local Python bridge. Clone the converter locally when you want archive import enabled:
 

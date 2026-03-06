@@ -118,6 +118,12 @@ a {
   gap: 10px;
 }
 
+.source-tabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .button {
   display: inline-flex;
   align-items: center;

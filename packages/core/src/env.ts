@@ -20,7 +20,8 @@ const envSchema = z.object({
   API_BASE_URL: z.string().url().default("http://localhost:4000"),
   MAIL_SYNC_INTERVAL_SECONDS: z.coerce.number().int().positive().default(120),
   MAIL_SYNC_MESSAGE_LIMIT: z.coerce.number().int().min(1).max(100).default(50),
-  OLM_CONVERTER_PYTHON: optionalString
+  OLM_CONVERTER_PYTHON: optionalString,
+  THUNDERBIRD_MCP_URL: z.string().url().default("http://127.0.0.1:8765")
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

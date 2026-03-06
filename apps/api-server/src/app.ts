@@ -7,6 +7,7 @@ import { getEnv } from "@smart-email/core";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerMailRoutes } from "./routes/mail";
 import { registerImportRoutes } from "./routes/imports";
+import { registerThunderbirdRoutes } from "./routes/thunderbird";
 import { registerThreadRoutes } from "./routes/threads";
 
 export function buildApp() {
@@ -34,6 +35,7 @@ export function buildApp() {
   app.register(registerAuthRoutes);
   app.register(registerMailRoutes);
   app.register(registerImportRoutes);
+  app.register(registerThunderbirdRoutes);
   app.register(registerThreadRoutes);
 
   return app;

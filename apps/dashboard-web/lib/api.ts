@@ -103,6 +103,65 @@ export type ImportJobSummary = {
   };
 };
 
+export type ThunderbirdStatus = {
+  available: boolean;
+  profilePaths: string[];
+  bridgeUrl: string;
+  serverInfo?: {
+    name: string;
+    version: string;
+  };
+  error?: string;
+  bundledXpiDetected?: boolean;
+  extensionXpiPath?: string | null;
+  setupSteps?: string[];
+};
+
+export type ThunderbirdAccount = {
+  id: string;
+  name: string;
+  type: string;
+  identities: Array<{
+    id: string;
+    email: string;
+    name: string;
+    isDefault: boolean;
+  }>;
+};
+
+export type ThunderbirdFolder = {
+  name: string;
+  path: string;
+  type: string;
+  accountId: string;
+  totalMessages: number;
+  unreadMessages: number;
+  depth: number;
+};
+
+export type ThunderbirdMessageSummary = {
+  id: string;
+  subject: string;
+  author: string;
+  recipients: string;
+  ccList?: string;
+  date: string | null;
+  folder: string;
+  folderPath: string;
+  read: boolean;
+  flagged: boolean;
+};
+
+export type ThunderbirdMessageDetail = ThunderbirdMessageSummary & {
+  body: string;
+  bodyIsHtml: boolean;
+  attachments: Array<{
+    name: string;
+    contentType: string;
+    size: number | null;
+  }>;
+};
+
 async function apiFetch<T>(path: string, init?: RequestInit) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
@@ -136,6 +195,60 @@ export async function fetchThreads(mailboxId?: string) {
 
 export async function fetchThread(threadId: string) {
   return apiFetch<{ thread: ThreadDetail }>(`/v1/threads/${threadId}`);
+}
+
+export async function fetchThunderbirdStatus() {
+  return apiFetch<ThunderbirdStatus>("/v1/thunderbird/status");
+}
+
+export async function fetchThunderbirdAccounts() {
+  return apiFetch<{ accounts: ThunderbirdAccount[] }>("/v1/thunderbird/accounts");
+}
+
+export async function fetchThunderbirdFolders(accountId?: string) {
+  const query = accountId ? `?accountId=${encodeURIComponent(accountId)}` : "";
+  return apiFetch<{ folders: ThunderbirdFolder[] }>(`/v1/thunderbird/folders${query}`);
+}
+
+export async function fetchThunderbirdRecentMessages(folderPath?: string) {
+  const params = new URLSearchParams({
+    daysBack: "14",
+    maxResults: "60"
+  });
+
+  if (folderPath) {
+    params.set("folderPath", folderPath);
+  }
+
+  return apiFetch<{ messages: ThunderbirdMessageSummary[] }>(
+    `/v1/thunderbird/messages/recent?${params.toString()}`
+  );
+}
+
+export async function fetchThunderbirdMessage(messageId: string, folderPath: string) {
+  const params = new URLSearchParams({
+    messageId,
+    folderPath
+  });
+
+  return apiFetch<{ message: ThunderbirdMessageDetail }>(
+    `/v1/thunderbird/messages/detail?${params.toString()}`
+  );
+}
+
+export async function searchThunderbirdMessages(query: string, folderPath?: string) {
+  const params = new URLSearchParams({
+    query,
+    maxResults: "60"
+  });
+
+  if (folderPath) {
+    params.set("folderPath", folderPath);
+  }
+
+  return apiFetch<{ messages: ThunderbirdMessageSummary[] }>(
+    `/v1/thunderbird/messages/search?${params.toString()}`
+  );
 }
 
 export async function fetchImports(mailboxId?: string, accountId?: string) {
