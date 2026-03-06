@@ -78,15 +78,12 @@ export type ThunderbirdMessageDetail = ThunderbirdMessageSummary & {
   }>;
 };
 
-type InitializeResult = {
-  protocolVersion: string;
-  capabilities: {
-    tools: Record<string, unknown>;
-  };
-  serverInfo: {
+type ToolsListResult = {
+  tools: Array<{
     name: string;
-    version: string;
-  };
+    title?: string;
+    description?: string;
+  }>;
 };
 
 const DEFAULT_PROFILE_ROOT = join(homedir(), "Library", "Thunderbird", "Profiles");
@@ -155,17 +152,20 @@ export async function getThunderbirdStatus(): Promise<ThunderbirdStatus> {
   const profilePaths = await findThunderbirdProfiles();
 
   try {
-    const init = await thunderbirdJsonRpc<InitializeResult>({
+    const tools = await thunderbirdJsonRpc<ToolsListResult>({
       jsonrpc: "2.0",
       id: 1,
-      method: "initialize"
+      method: "tools/list"
     });
 
     return {
       available: true,
       profilePaths,
       bridgeUrl: env.THUNDERBIRD_MCP_URL,
-      serverInfo: init.serverInfo
+      serverInfo: {
+        name: "Thunderbird MCP",
+        version: `${tools.tools.length} tools`
+      }
     };
   } catch (error) {
     return {
