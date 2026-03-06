@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountProvider {
+  MICROSOFT
+}
+
+enum AccountStatus {
+  ACTIVE
+  NEEDS_REAUTH
+  DISCONNECTED
+}
+
+enum MailboxKind {
+  PRIMARY
+  SHARED
+}
+
+enum SyncJobStatus {
+  QUEUED
+  IN_PROGRESS
+  SUCCEEDED
+  FAILED
+}
+
+enum SyncTrigger {
+  MANUAL
+  OAUTH_CALLBACK
+  POLL
+}
+
+model OAuthState {
+  id               String          @id @default(cuid())
+  state            String          @unique
+  provider         AccountProvider
+  postAuthRedirect String?
+  createdAt        DateTime        @default(now())
+}
+
+model Account {
+  id               String          @id @default(cuid())
+  provider         AccountProvider
+  status           AccountStatus   @default(ACTIVE)
+  tenantId         String
+  externalUserId   String
+  email            String
+  displayName      String?
+  scopes           String
+  accessToken      String          @db.Text
+  refreshToken     String?         @db.Text
+  tokenExpiresAt   DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  mailboxes        Mailbox[]
+  syncJobs         SyncJob[]
+
+  @@unique([provider, externalUserId])
+}
+
+model Mailbox {
+  id                  String      @id @default(cuid())
+  accountId           String
+  externalId          String
+  emailAddress        String
+  displayName         String
+  kind                MailboxKind
+  deltaLink           String?     @db.Text
+  lastSyncedAt        DateTime?
+  lastSyncError       String?     @db.Text
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  account             Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  threads             Thread[]
+  messages            Message[]
+  syncJobs            SyncJob[]
+
+  @@unique([accountId, externalId])
+  @@unique([accountId, emailAddress])
+}
+
+model Thread {
+  id                     String     @id @default(cuid())
+  mailboxId              String
+  externalConversationId String
+  subject                String
+  participants           Json
+  unreadCount            Int        @default(0)
+  lastMessageAt          DateTime
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+  mailbox                Mailbox    @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  messages               Message[]
+
+  @@unique([mailboxId, externalConversationId])
+  @@index([mailboxId, lastMessageAt(sort: Desc)])
+}
+
+model Message {
+  id                String    @id @default(cuid())
+  mailboxId         String
+  threadId          String
+  externalMessageId String
+  internetMessageId String?
+  subject           String
+  fromName          String?
+  fromAddress       String?
+  toRecipients      Json
+  ccRecipients      Json
+  receivedAt        DateTime
+  sentAt            DateTime?
+  bodyPreview       String
+  bodyText          String    @db.Text
+  bodyHtml          String?   @db.Text
+  webLink           String?
+  importance        String?
+  isRead            Boolean   @default(false)
+  hasAttachments    Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  mailbox           Mailbox   @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  thread            Thread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@unique([mailboxId, externalMessageId])
+  @@index([threadId, receivedAt(sort: Desc)])
+}
+
+model SyncJob {
+  id          String        @id @default(cuid())
+  accountId   String
+  mailboxId   String
+  status      SyncJobStatus @default(QUEUED)
+  trigger     SyncTrigger
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  errorText   String?       @db.Text
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  account     Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  mailbox     Mailbox       @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}

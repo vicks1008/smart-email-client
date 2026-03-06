@@ -3,9 +3,19 @@
   "private": true,
   "packageManager": "pnpm@10.5.2",
   "scripts": {
+    "dev": "pnpm --parallel --filter @smart-email/api-server --filter @smart-email/dashboard-web --filter @smart-email/mail-worker run dev",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build",
+    "db:generate": "pnpm --filter @smart-email/core prisma:generate",
+    "db:migrate": "pnpm --filter @smart-email/core db:migrate",
     "local:up": "docker compose --env-file .env.localstack -f infra/local/docker-compose.yml up -d --build",
     "local:ps": "docker compose --env-file .env.localstack -f infra/local/docker-compose.yml ps",
-    "local:down": "docker compose --env-file .env.localstack -f infra/local/docker-compose.yml down"
+    "local:down": "docker compose --env-file .env.localstack -f infra/local/docker-compose.yml down",
+    "postinstall": "pnpm db:generate"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
   }
 }
-
