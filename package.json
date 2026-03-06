@@ -1,0 +1,11 @@
+{
+  "name": "smart-email-client",
+  "private": true,
+  "packageManager": "pnpm@10.5.2",
+  "scripts": {
+    "local:up": "docker compose --env-file .env.localstack -f infra/local/docker-compose.yml up -d --build",
+    "local:ps": "docker compose --env-file .env.localstack -f infra/local/docker-compose.yml ps",
+    "local:down": "docker compose --env-file .env.localstack -f infra/local/docker-compose.yml down"
+  }
+}
+
