@@ -1,4 +1,18 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+function getApiBaseUrl() {
+  const configured = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+
+  if (typeof window === "undefined") {
+    return configured;
+  }
+
+  try {
+    const url = new URL(configured);
+    url.hostname = window.location.hostname;
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return configured;
+  }
+}
 
 export type AccountSummary = {
   id: string;
@@ -163,7 +177,7 @@ export type ThunderbirdMessageDetail = ThunderbirdMessageSummary & {
 };
 
 async function apiFetch<T>(path: string, init?: RequestInit) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -181,7 +195,7 @@ async function apiFetch<T>(path: string, init?: RequestInit) {
 }
 
 export function getMicrosoftConnectUrl(redirectUrl: string) {
-  return `${API_BASE_URL}/v1/auth/microsoft/start?redirect=${encodeURIComponent(redirectUrl)}`;
+  return `${getApiBaseUrl()}/v1/auth/microsoft/start?redirect=${encodeURIComponent(redirectUrl)}`;
 }
 
 export async function fetchAccounts() {
@@ -306,7 +320,7 @@ export async function uploadArchive(payload: {
     formData.append("mailboxDisplayName", payload.mailboxDisplayName);
   }
 
-  const response = await fetch(`${API_BASE_URL}/v1/imports`, {
+  const response = await fetch(`${getApiBaseUrl()}/v1/imports`, {
     method: "POST",
     body: formData
   });

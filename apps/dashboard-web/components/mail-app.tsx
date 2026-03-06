@@ -241,7 +241,10 @@ export function MailApp() {
   async function loadThunderbirdMessage(messageId: string, folderPath: string) {
     try {
       const data = await fetchThunderbirdMessage(messageId, folderPath);
-      setSelectedThunderbirdMessage(data.message);
+      setSelectedThunderbirdMessage({
+        ...data.message,
+        attachments: data.message.attachments ?? []
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load Thunderbird message.");
     }
@@ -417,6 +420,7 @@ export function MailApp() {
     thunderbirdFolders.find((folder) => folder.path === selectedThunderbirdFolderPath)?.name ??
     selectedThunderbirdAccount?.name ??
     "Thunderbird";
+  const liveMessageAttachments = selectedThunderbirdMessage?.attachments ?? [];
 
   return (
     <main className="mail-shell">
@@ -832,9 +836,9 @@ export function MailApp() {
                       <div className="mailbox-pill">{selectedThunderbirdMessage.read ? "read" : "unread"}</div>
                     </div>
                     <p className="message-body">{selectedThunderbirdMessage.body || "(empty message)"}</p>
-                    {selectedThunderbirdMessage.attachments.length > 0 ? (
+                    {liveMessageAttachments.length > 0 ? (
                       <div className="thread-row-meta">
-                        {selectedThunderbirdMessage.attachments.map((attachment) => (
+                        {liveMessageAttachments.map((attachment) => (
                           <span key={`${attachment.name}-${attachment.size}`} className="meta-pill">
                             {attachment.name}
                           </span>
