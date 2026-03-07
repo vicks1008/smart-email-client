@@ -6,6 +6,8 @@
     "dev": "pnpm --parallel --filter @smart-email/api-server --filter @smart-email/dashboard-web --filter @smart-email/mail-worker run dev",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "db:generate": "pnpm --filter @smart-email/core prisma:generate",
     "db:migrate": "pnpm --filter @smart-email/core db:migrate",
     "local:up": "docker compose --env-file .env.localstack -f infra/local/docker-compose.yml up -d --build",
@@ -14,6 +16,7 @@
     "postinstall": "pnpm db:generate"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/node": "^25.3.5",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

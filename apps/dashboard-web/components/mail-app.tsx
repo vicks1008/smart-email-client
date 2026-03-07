@@ -2,15 +2,16 @@
 
 import {
   Archive,
+  BrainCircuit,
   Building2,
   CheckCircle2,
   ChevronRight,
   Clock3,
-  FileText,
-  Flag,
+  Copy,
   FolderSync,
   Inbox,
   MailPlus,
+  PanelLeft,
   PlugZap,
   RefreshCcw,
   SendHorizontal,
@@ -19,7 +20,15 @@ import {
   Upload,
   Users
 } from "lucide-react";
-import { startTransition, useDeferredValue, useEffect, useMemo, useState, useTransition, type FormEvent } from "react";
+import {
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+  type FormEvent
+} from "react";
 import { toast } from "sonner";
 
 import {
@@ -56,12 +65,18 @@ import {
   type WorkbenchData
 } from "../lib/api";
 
-type SourceMode = "thunderbird" | "archive";
-type ArchiveSurface = "needsReply" | "waitingOnThem" | "followUpToday" | "allThreads";
+type WorkspaceView = "inbox" | "accounts" | "followups" | "live";
+type InboxQueue = "needsReply" | "waitingOnThem" | "allThreads";
+
+type DraftTemplate = {
+  id: string;
+  label: string;
+  body: string;
+};
 
 function formatDate(value: string | null | undefined) {
   if (!value) {
-    return "Not synced yet";
+    return "No date";
   }
 
   return new Intl.DateTimeFormat(undefined, {
@@ -125,10 +140,77 @@ function categoryLabel(category: ThreadSummary["latestCategory"] | ThreadDetail[
   return category?.label.toLowerCase().replace(/_/g, " ") ?? "uncategorized";
 }
 
+function participantName(thread: ThreadDetail) {
+  const mailboxEmail = thread.mailbox.emailAddress;
+  const primaryPerson = thread.people.find((person) => !person.isMailbox)?.displayName;
+  const firstExternalParticipant = thread.participants.find((participant) => participant.address !== mailboxEmail)?.name;
+  const firstExternalMessage =
+    thread.messages.find((message) => message.fromAddress && message.fromAddress !== mailboxEmail) ?? thread.messages[0];
+
+  return (
+    primaryPerson ??
+    firstExternalMessage?.fromName ??
+    firstExternalMessage?.fromAddress ??
+    firstExternalParticipant ??
+    "there"
+  );
+}
+
+function mailboxSignatureName(thread: ThreadDetail) {
+  return thread.mailbox.displayName.split(" ")[0] ?? thread.mailbox.displayName;
+}
+
+function draftTemplatesForThread(thread: ThreadDetail | null): DraftTemplate[] {
+  if (!thread) {
+    return [];
+  }
+
+  const name = participantName(thread);
+  const signoff = mailboxSignatureName(thread);
+  const dueText = thread.replyState?.replyDueAt ? formatShortDate(thread.replyState.replyDueAt) : "today";
+  const subject = thread.subject === "(no subject)" ? "your note" : thread.subject;
+
+  return [
+    {
+      id: "acknowledge",
+      label: "Acknowledge",
+      body: `Hi ${name},\n\nThanks for the note about ${subject}. I have this in front of me and will follow up by ${dueText}.\n\nBest,\n${signoff}`
+    },
+    {
+      id: "follow-up",
+      label: "Follow up",
+      body: `Hi ${name},\n\nChecking back on the thread below. Let me know if you have any updates or if you want me to move this forward from my side.\n\nBest,\n${signoff}`
+    },
+    {
+      id: "clarify",
+      label: "Clarify",
+      body: `Hi ${name},\n\nI can take this next step, but I want to confirm one thing first so I do not move in the wrong direction. Can you send over the key detail you want me to work from?\n\nBest,\n${signoff}`
+    }
+  ];
+}
+
+function threadMatchesQuery(thread: ThreadSummary, normalizedQuery: string) {
+  const haystack = [
+    thread.subject,
+    thread.latestMessage?.bodyPreview ?? "",
+    thread.primaryOrganization?.name ?? "",
+    thread.primaryOrganization?.primaryDomain ?? "",
+    thread.latestMessage?.fromName ?? "",
+    thread.latestMessage?.fromAddress ?? "",
+    ...thread.participants.map((participant) => `${participant.name} ${participant.address}`)
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  return haystack.includes(normalizedQuery);
+}
+
 export function MailApp() {
-  const [sourceMode, setSourceMode] = useState<SourceMode>("archive");
-  const [archiveSurface, setArchiveSurface] = useState<ArchiveSurface>("needsReply");
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("inbox");
+  const [inboxQueue, setInboxQueue] = useState<InboxQueue>("needsReply");
   const [search, setSearch] = useState("");
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  const [draftText, setDraftText] = useState("");
 
   const [thunderbirdStatus, setThunderbirdStatus] = useState<ThunderbirdStatus | null>(null);
   const [thunderbirdAccounts, setThunderbirdAccounts] = useState<ThunderbirdAccount[]>([]);
@@ -140,7 +222,7 @@ export function MailApp() {
   const [selectedThunderbirdMessage, setSelectedThunderbirdMessage] = useState<ThunderbirdMessageDetail | null>(null);
   const [thunderbirdDiscoveredMailboxes, setThunderbirdDiscoveredMailboxes] = useState<ThunderbirdDiscoveredMailbox[]>([]);
   const [thunderbirdSyncSources, setThunderbirdSyncSources] = useState<ThunderbirdSyncSource[]>([]);
-  const [selectedThunderbirdCandidateEmail, setSelectedThunderbirdCandidateEmail] = useState<string>("");
+  const [selectedThunderbirdCandidateEmail, setSelectedThunderbirdCandidateEmail] = useState("");
 
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
@@ -205,27 +287,29 @@ export function MailApp() {
   }, []);
 
   useEffect(() => {
-    if (selectedThunderbirdAccountId) {
-      void refreshThunderbirdFolders(selectedThunderbirdAccountId);
+    if (!selectedThunderbirdAccountId) {
+      return;
     }
+
+    void refreshThunderbirdFolders(selectedThunderbirdAccountId);
   }, [selectedThunderbirdAccountId]);
 
   useEffect(() => {
-    if (sourceMode !== "thunderbird") {
+    if (workspaceView !== "live") {
       return;
     }
 
     void refreshThunderbirdMessages(selectedThunderbirdFolderPath ?? undefined, deferredSearch);
-  }, [sourceMode, selectedThunderbirdFolderPath, deferredSearch]);
+  }, [workspaceView, selectedThunderbirdFolderPath, deferredSearch]);
 
   useEffect(() => {
-    if (!selectedThunderbirdMessageId || !selectedThunderbirdFolderPath || sourceMode !== "thunderbird") {
+    if (!selectedThunderbirdMessageId || !selectedThunderbirdFolderPath || workspaceView !== "live") {
       setSelectedThunderbirdMessage(null);
       return;
     }
 
     void loadThunderbirdMessage(selectedThunderbirdMessageId, selectedThunderbirdFolderPath);
-  }, [selectedThunderbirdMessageId, selectedThunderbirdFolderPath, sourceMode]);
+  }, [selectedThunderbirdFolderPath, selectedThunderbirdMessageId, workspaceView]);
 
   useEffect(() => {
     if (!selectedMailboxId) {
@@ -249,6 +333,11 @@ export function MailApp() {
 
     void loadThread(selectedThreadId);
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    const templates = draftTemplatesForThread(selectedThread);
+    setDraftText(templates[0]?.body ?? "");
+  }, [selectedThreadId, selectedThread]);
 
   async function refreshThunderbirdStatus() {
     try {
@@ -512,7 +601,7 @@ export function MailApp() {
         await refreshThreads(result.sync.mailbox.id);
         setSelectedAccountId(result.sync.account.id);
         setSelectedMailboxId(result.sync.mailbox.id);
-        setSourceMode("archive");
+        setWorkspaceView("inbox");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Thunderbird sync failed.");
       }
@@ -526,7 +615,7 @@ export function MailApp() {
           daysBack: 45,
           maxMessagesPerFolder: 250
         });
-        toast.success(`Synced ${result.syncs.length} discovered Thunderbird mailbox${result.syncs.length === 1 ? "" : "es"} into the workbench.`);
+        toast.success(`Synced ${result.syncs.length} discovered Thunderbird mailbox${result.syncs.length === 1 ? "" : "es"} into the client.`);
         await refreshThunderbirdDiscovery();
         await refreshArchiveAccounts();
         await refreshWorkbench();
@@ -536,79 +625,45 @@ export function MailApp() {
     });
   }
 
-  const allArchiveThreads = useMemo(() => {
-    const normalizedQuery = deferredSearch.trim().toLowerCase();
+  async function copyDraft() {
+    try {
+      await navigator.clipboard.writeText(draftText);
+      toast.success("Draft copied to clipboard.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to copy draft.");
+    }
+  }
 
+  const normalizedQuery = deferredSearch.trim().toLowerCase();
+
+  const allArchiveThreads = useMemo(() => {
     if (!normalizedQuery) {
       return threads;
     }
 
-    return threads.filter((thread) => {
-      const participants = thread.participants
-        .map((participant) => `${participant.name} ${participant.address}`)
-        .join(" ")
-        .toLowerCase();
-      const organization = `${thread.primaryOrganization?.name ?? ""} ${thread.primaryOrganization?.primaryDomain ?? ""}`.toLowerCase();
+    return threads.filter((thread) => threadMatchesQuery(thread, normalizedQuery));
+  }, [normalizedQuery, threads]);
 
-      return (
-        thread.subject.toLowerCase().includes(normalizedQuery) ||
-        thread.latestMessage?.bodyPreview.toLowerCase().includes(normalizedQuery) ||
-        participants.includes(normalizedQuery) ||
-        organization.includes(normalizedQuery)
-      );
-    });
-  }, [deferredSearch, threads]);
-
-  const filteredWorkbenchNeedsReply = useMemo(() => {
-    const normalizedQuery = deferredSearch.trim().toLowerCase();
+  const filteredNeedsReply = useMemo(() => {
     const items = workbench?.needsReply ?? [];
-
     if (!normalizedQuery) {
       return items;
     }
 
-    return items.filter((thread) => {
-      const haystack = [
-        thread.subject,
-        thread.latestMessage?.bodyPreview ?? "",
-        thread.primaryOrganization?.name ?? "",
-        thread.primaryOrganization?.primaryDomain ?? "",
-        thread.latestMessage?.fromName ?? "",
-        thread.latestMessage?.fromAddress ?? ""
-      ]
-        .join(" ")
-        .toLowerCase();
+    return items.filter((thread) => threadMatchesQuery(thread, normalizedQuery));
+  }, [normalizedQuery, workbench]);
 
-      return haystack.includes(normalizedQuery);
-    });
-  }, [deferredSearch, workbench]);
-
-  const filteredWorkbenchWaiting = useMemo(() => {
-    const normalizedQuery = deferredSearch.trim().toLowerCase();
+  const filteredWaiting = useMemo(() => {
     const items = workbench?.waitingOnThem ?? [];
-
     if (!normalizedQuery) {
       return items;
     }
 
-    return items.filter((thread) => {
-      const haystack = [
-        thread.subject,
-        thread.latestMessage?.bodyPreview ?? "",
-        thread.primaryOrganization?.name ?? "",
-        thread.primaryOrganization?.primaryDomain ?? ""
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      return haystack.includes(normalizedQuery);
-    });
-  }, [deferredSearch, workbench]);
+    return items.filter((thread) => threadMatchesQuery(thread, normalizedQuery));
+  }, [normalizedQuery, workbench]);
 
   const filteredFollowUps = useMemo(() => {
-    const normalizedQuery = deferredSearch.trim().toLowerCase();
     const items = workbench?.followUpToday ?? [];
-
     if (!normalizedQuery) {
       return items;
     }
@@ -619,823 +674,915 @@ export function MailApp() {
         .toLowerCase()
         .includes(normalizedQuery)
     );
-  }, [deferredSearch, workbench]);
+  }, [normalizedQuery, workbench]);
 
-  const archiveItems =
-    archiveSurface === "needsReply"
-      ? filteredWorkbenchNeedsReply
-      : archiveSurface === "waitingOnThem"
-        ? filteredWorkbenchWaiting
-        : archiveSurface === "followUpToday"
-          ? []
-          : allArchiveThreads;
+  const filteredOrganizations = useMemo(() => {
+    const items = workbench?.byOrganization ?? [];
+    if (!normalizedQuery) {
+      return items;
+    }
+
+    return items.filter((organization) =>
+      [organization.name, organization.primaryDomain ?? "", organization.kind].join(" ").toLowerCase().includes(normalizedQuery)
+    );
+  }, [normalizedQuery, workbench]);
+
+  const inboxThreads =
+    inboxQueue === "needsReply" ? filteredNeedsReply : inboxQueue === "waitingOnThem" ? filteredWaiting : allArchiveThreads;
+
+  const selectedOrganization = useMemo(
+    () => filteredOrganizations.find((organization) => organization.id === selectedOrganizationId) ?? filteredOrganizations[0] ?? null,
+    [filteredOrganizations, selectedOrganizationId]
+  );
+
+  const organizationThreads = useMemo(() => {
+    if (!selectedOrganization) {
+      return [];
+    }
+
+    return allArchiveThreads.filter((thread) => thread.primaryOrganization?.id === selectedOrganization.id);
+  }, [allArchiveThreads, selectedOrganization]);
 
   useEffect(() => {
-    if (sourceMode !== "archive") {
+    if (workspaceView === "live") {
       return;
     }
 
-    if (archiveSurface === "followUpToday") {
-      setSelectedThreadId((current) => {
-        const retained = filteredFollowUps.find((task) => task.thread.id === current)?.thread.id;
-        return retained ?? filteredFollowUps[0]?.thread.id ?? null;
-      });
+    if (workspaceView === "accounts") {
+      setSelectedOrganizationId((current) => filteredOrganizations.find((organization) => organization.id === current)?.id ?? filteredOrganizations[0]?.id ?? null);
+      setSelectedThreadId((current) => organizationThreads.find((thread) => thread.id === current)?.id ?? organizationThreads[0]?.id ?? null);
       return;
     }
 
-    setSelectedThreadId((current) => {
-      const retained = archiveItems.find((thread) => thread.id === current)?.id;
-      return retained ?? archiveItems[0]?.id ?? null;
-    });
-  }, [archiveItems, archiveSurface, filteredFollowUps, sourceMode]);
+    if (workspaceView === "followups") {
+      setSelectedThreadId((current) => filteredFollowUps.find((task) => task.thread.id === current)?.thread.id ?? filteredFollowUps[0]?.thread.id ?? null);
+      return;
+    }
+
+    setSelectedThreadId((current) => inboxThreads.find((thread) => thread.id === current)?.id ?? inboxThreads[0]?.id ?? null);
+  }, [filteredFollowUps, filteredOrganizations, inboxThreads, organizationThreads, workspaceView]);
+
+  const workspaceTitle =
+    workspaceView === "inbox"
+      ? inboxQueue === "needsReply"
+        ? "Needs Reply"
+        : inboxQueue === "waitingOnThem"
+          ? "Waiting on Client"
+          : "All Mail"
+      : workspaceView === "accounts"
+        ? "Accounts"
+        : workspaceView === "followups"
+          ? "Follow-ups"
+          : "Thunderbird Live";
+
+  const workspaceCopy =
+    workspaceView === "inbox"
+      ? "Triage the next important thread, then work the conversation in one place."
+      : workspaceView === "accounts"
+        ? "Group work by company so client pressure and stale accounts are visible."
+        : workspaceView === "followups"
+          ? "Run the reminder queue without digging through raw inbox history."
+          : "Browse Thunderbird directly, then pull the right mailbox into the AI client.";
 
   const selectedImportSummary = imports[0] ?? null;
   const liveHeaderName =
     thunderbirdFolders.find((folder) => folder.path === selectedThunderbirdFolderPath)?.name ??
     selectedThunderbirdAccount?.name ??
     "Thunderbird";
+  const draftTemplates = draftTemplatesForThread(selectedThread);
 
   return (
-    <main className="mail-shell modern-shell">
-      <div className="app-shell">
-        <aside className="app-rail">
-          <div className="rail-brand">
-            <div className="rail-brand-mark">
+    <main className="client-shell">
+      <div className="client-app">
+        <aside className="client-nav" data-testid="client-nav">
+          <div className="nav-brand">
+            <div className="nav-mark">
               <Sparkles size={18} />
             </div>
             <div>
-              <div className="eyebrow">Phase 2</div>
-              <h1 className="rail-title">Smart Mail</h1>
+              <div className="eyebrow">AI email client</div>
+              <h1>Smart Mail</h1>
             </div>
           </div>
 
-          <div className="rail-section">
-            <button
-              className={`rail-button ${sourceMode === "archive" ? "active" : ""}`}
-              onClick={() => setSourceMode("archive")}
-            >
+          <div className="nav-group">
+            <button className={`nav-button ${workspaceView === "inbox" ? "active" : ""}`} onClick={() => setWorkspaceView("inbox")} data-testid="workspace-nav-inbox">
               <Inbox size={18} />
-              <span>Workbench</span>
+              <span>Inbox</span>
             </button>
-            <button
-              className={`rail-button ${sourceMode === "thunderbird" ? "active" : ""}`}
-              onClick={() => setSourceMode("thunderbird")}
-            >
+            <button className={`nav-button ${workspaceView === "accounts" ? "active" : ""}`} onClick={() => setWorkspaceView("accounts")} data-testid="workspace-nav-accounts">
+              <Building2 size={18} />
+              <span>Accounts</span>
+            </button>
+            <button className={`nav-button ${workspaceView === "followups" ? "active" : ""}`} onClick={() => setWorkspaceView("followups")} data-testid="workspace-nav-followups">
+              <Clock3 size={18} />
+              <span>Follow-ups</span>
+            </button>
+            <button className={`nav-button ${workspaceView === "live" ? "active" : ""}`} onClick={() => setWorkspaceView("live")} data-testid="workspace-nav-live">
               <PlugZap size={18} />
               <span>Live</span>
             </button>
           </div>
 
-          {sourceMode === "archive" ? (
-            <div className="rail-section">
-              <div className="rail-label">Queues</div>
-              <button
-                className={`rail-button ${archiveSurface === "needsReply" ? "active" : ""}`}
-                onClick={() => setArchiveSurface("needsReply")}
-              >
-                <Inbox size={18} />
-                <span>Needs Reply</span>
-              </button>
-              <button
-                className={`rail-button ${archiveSurface === "waitingOnThem" ? "active" : ""}`}
-                onClick={() => setArchiveSurface("waitingOnThem")}
-              >
-                <SendHorizontal size={18} />
-                <span>Waiting</span>
-              </button>
-              <button
-                className={`rail-button ${archiveSurface === "followUpToday" ? "active" : ""}`}
-                onClick={() => setArchiveSurface("followUpToday")}
-              >
-                <Clock3 size={18} />
-                <span>Follow-ups</span>
-              </button>
-              <button
-                className={`rail-button ${archiveSurface === "allThreads" ? "active" : ""}`}
-                onClick={() => setArchiveSurface("allThreads")}
-              >
-                <Archive size={18} />
-                <span>All Mail</span>
-              </button>
+          <div className="nav-stats">
+            <div className="nav-stat">
+              <span>Needs reply</span>
+              <strong>{workbench?.summary.needsReply ?? 0}</strong>
             </div>
-          ) : null}
-
-          <div className="rail-footer">
-            {sourceMode === "archive" ? (
-              <>
-                <div className="rail-metric">
-                  <span>Needs reply</span>
-                  <strong>{workbench?.summary.needsReply ?? 0}</strong>
-                </div>
-                <div className="rail-metric">
-                  <span>Overdue</span>
-                  <strong>{workbench?.summary.overdue ?? 0}</strong>
-                </div>
-                <div className="rail-metric">
-                  <span>Follow up today</span>
-                  <strong>{workbench?.summary.followUpToday ?? 0}</strong>
-                </div>
-              </>
-            ) : (
-              <div className="rail-live-status">
-                <div className={`status-pill ${thunderbirdStatus?.available ? "active" : "warning"}`}>
-                  {thunderbirdStatus?.available ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                  {thunderbirdStatus?.available ? "Bridge online" : "Bridge offline"}
-                </div>
-                <div className="muted">{thunderbirdStatus?.bridgeUrl ?? "http://127.0.0.1:8765"}</div>
-              </div>
-            )}
+            <div className="nav-stat">
+              <span>Waiting</span>
+              <strong>{workbench?.summary.waitingOnThem ?? 0}</strong>
+            </div>
+            <div className="nav-stat">
+              <span>Due today</span>
+              <strong>{workbench?.summary.followUpToday ?? 0}</strong>
+            </div>
           </div>
         </aside>
 
-        <section className="workspace-shell">
-          <header className="workspace-header">
-            <div className="workspace-heading">
-              <div className="eyebrow">{sourceMode === "archive" ? "Action-first inbox" : "Live mailbox stream"}</div>
-              <h2 className="workspace-title">
-                {sourceMode === "archive"
-                  ? archiveSurface === "needsReply"
-                    ? "Needs Reply"
-                    : archiveSurface === "waitingOnThem"
-                      ? "Waiting on Client"
-                      : archiveSurface === "followUpToday"
-                        ? "Follow Up Today"
-                        : "All Threads"
-                  : liveHeaderName}
-              </h2>
-              <p className="workspace-copy">
-                {sourceMode === "archive"
-                  ? "Keep the list focused on the next action instead of raw mailbox plumbing."
-                  : "Thunderbird stays available for live folder browsing while the archive side powers intelligence."}
-              </p>
+        <section className="client-main">
+          <header className="client-topbar">
+            <div className="topbar-copy">
+              <div className="eyebrow">Actionable workspace</div>
+              <h2>{workspaceTitle}</h2>
+              <p>{workspaceCopy}</p>
             </div>
 
-            <div className="workspace-toolbar">
+            <div className="topbar-tools">
               <input
-                className="search search-wide"
+                className="client-search"
                 placeholder={
-                  sourceMode === "archive"
-                    ? "Search subject, company, person, or follow-up"
-                    : "Search Thunderbird subject, sender, or recipient"
+                  workspaceView === "live"
+                    ? "Search Thunderbird subject, sender, or recipient"
+                    : "Search subject, account, company, person, or follow-up"
                 }
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
+                data-testid="global-search"
               />
-
-              {sourceMode === "archive" ? (
+              {workspaceView === "live" ? (
+                <button className="client-button secondary" onClick={() => void refreshThunderbirdStatus()}>
+                  <RefreshCcw size={16} />
+                  Refresh live
+                </button>
+              ) : (
                 <>
                   <button
-                    className="button primary"
+                    className="client-button primary"
                     onClick={() => (window.location.href = getMicrosoftConnectUrl(`${window.location.origin}/mail`))}
                   >
                     <MailPlus size={16} />
                     Connect
                   </button>
-                  <button className="button secondary" disabled={isSyncPending} onClick={() => void handleManualSync()}>
-                    <RefreshCcw size={16} />
-                    Sync
+                  <button className="client-button secondary" disabled={isSyncPending} onClick={() => void handleManualSync()}>
+                    <FolderSync size={16} />
+                    Sync mailbox
                   </button>
                 </>
-              ) : (
-                <button className="button secondary" onClick={() => void refreshThunderbirdStatus()}>
-                  <RefreshCcw size={16} />
-                  Refresh
-                </button>
               )}
             </div>
           </header>
 
-          <div className="workspace-summary">
-            {sourceMode === "archive" ? (
-              <>
-                <div className="summary-card accent">
-                  <span className="summary-label">Mailbox</span>
-                  <strong>{selectedMailbox?.displayName ?? "No mailbox selected"}</strong>
-                  <span className="muted">{selectedMailbox?.emailAddress ?? "Choose an account to populate queues."}</span>
+          {workspaceView !== "live" ? (
+            <section className="mailbox-strip">
+              <div className="mailbox-strip-group">
+                <span className="eyebrow">Accounts</span>
+                <div className="mailbox-chip-row" data-testid="account-selector">
+                  {accounts.length > 0 ? (
+                    accounts.map((account) => (
+                      <button
+                        key={account.id}
+                        className={`mailbox-chip ${account.id === selectedAccountId ? "active" : ""}`}
+                        onClick={() => {
+                          setSelectedAccountId(account.id);
+                          setSelectedMailboxId(account.mailboxes[0]?.id ?? null);
+                        }}
+                        data-testid={`account-${account.email}`}
+                      >
+                        <strong>{account.displayName ?? account.email}</strong>
+                        <span>{account.email}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="mailbox-chip empty">No imported account yet.</div>
+                  )}
                 </div>
-                <div className="summary-card">
-                  <span className="summary-label">By client</span>
-                  <strong>{workbench?.byOrganization.length ?? 0} active organizations</strong>
-                  <span className="muted">Clients and accounts are grouped from participants and domains.</span>
-                </div>
-                <div className="summary-card">
-                  <span className="summary-label">Latest import</span>
-                  <strong>{selectedImportSummary?.sourceFilename ?? "No recent import"}</strong>
-                  <span className="muted">
-                    {selectedImportSummary
-                      ? `${selectedImportSummary.importedMessages} messages · ${selectedImportSummary.status.toLowerCase()}`
-                      : "Import .eml or .olm to backfill history."}
-                  </span>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="summary-card accent">
-                  <span className="summary-label">Live source</span>
-                  <strong>{selectedThunderbirdAccount?.name ?? "Thunderbird"}</strong>
-                  <span className="muted">{thunderbirdStatus?.available ? "Local bridge connected." : "Local bridge offline."}</span>
-                </div>
-                <div className="summary-card">
-                  <span className="summary-label">Folders</span>
-                  <strong>{thunderbirdFolders.length}</strong>
-                  <span className="muted">Switch folders without leaving the reading workspace.</span>
-                </div>
-                <div className="summary-card">
-                  <span className="summary-label">Messages</span>
-                  <strong>{thunderbirdMessages.length}</strong>
-                  <span className="muted">The live view stays intentionally lightweight.</span>
-                </div>
-              </>
-            )}
-          </div>
+              </div>
 
-          <div className="workspace-body">
-            <section className="list-pane">
-              {sourceMode === "archive" ? (
+              <div className="mailbox-strip-group">
+                <span className="eyebrow">Mailboxes</span>
+                <div className="mailbox-chip-row">
+                  {selectedAccount?.mailboxes.length ? (
+                    selectedAccount.mailboxes.map((mailbox) => (
+                      <button
+                        key={mailbox.id}
+                        className={`mailbox-chip subtle ${mailbox.id === selectedMailboxId ? "active" : ""}`}
+                        onClick={() => setSelectedMailboxId(mailbox.id)}
+                      >
+                        <strong>{mailbox.displayName}</strong>
+                        <span>{mailbox.emailAddress}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="mailbox-chip empty">Choose an account to load mailboxes.</div>
+                  )}
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          <div className="mail-grid">
+            <section className="thread-pane">
+              {workspaceView === "inbox" ? (
                 <>
-                  <div className="stack-card">
-                    <div className="card-heading">
-                      <div>
-                        <div className="eyebrow">Sources</div>
-                        <h3 className="panel-title">Accounts and mailboxes</h3>
-                      </div>
-                      <button className="button secondary" disabled={loading} onClick={() => void refreshArchiveAccounts()}>
-                        <FolderSync size={16} />
-                        Refresh
+                  <div className="pane-header">
+                    <div>
+                      <div className="eyebrow">Queue</div>
+                      <h3>Thread list</h3>
+                    </div>
+                    <div className="segmented-control" data-testid="queue-selector">
+                      <button className={inboxQueue === "needsReply" ? "active" : ""} onClick={() => setInboxQueue("needsReply")}>
+                        Needs reply
+                      </button>
+                      <button className={inboxQueue === "waitingOnThem" ? "active" : ""} onClick={() => setInboxQueue("waitingOnThem")}>
+                        Waiting
+                      </button>
+                      <button className={inboxQueue === "allThreads" ? "active" : ""} onClick={() => setInboxQueue("allThreads")}>
+                        All
                       </button>
                     </div>
-
-                    {accounts.length > 0 ? (
-                      <div className="selector-stack">
-                        {accounts.map((account) => (
-                          <button
-                            key={account.id}
-                            className={`selector-button ${account.id === selectedAccountId ? "selected" : ""}`}
-                            onClick={() => {
-                              setSelectedAccountId(account.id);
-                              setSelectedMailboxId(account.mailboxes[0]?.id ?? null);
-                            }}
-                          >
-                            <div>
-                              <strong>{account.displayName ?? account.email}</strong>
-                              <div className="muted">{account.email}</div>
-                            </div>
-                            <span className={`status-pill ${statusClass(account.status)}`}>
-                              {account.status === "ACTIVE" ? "Active" : "Needs attention"}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="empty-inline">No imported account yet.</div>
-                    )}
-
-                    {selectedAccount?.mailboxes.length ? (
-                      <div className="chip-row">
-                        {selectedAccount.mailboxes.map((mailbox) => (
-                          <button
-                            key={mailbox.id}
-                            className={`chip-button ${mailbox.id === selectedMailboxId ? "selected" : ""}`}
-                            onClick={() => setSelectedMailboxId(mailbox.id)}
-                          >
-                            {mailbox.displayName}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
                   </div>
 
-                  <div className="stack-card">
-                    <div className="card-heading">
-                      <div>
-                        <div className="eyebrow">Queue</div>
-                        <h3 className="panel-title">
-                          {archiveSurface === "needsReply"
-                            ? "Needs Reply"
-                            : archiveSurface === "waitingOnThem"
-                              ? "Waiting on Client"
-                              : archiveSurface === "followUpToday"
-                                ? "Follow Up Today"
-                                : "All Threads"}
-                        </h3>
+                  <div className="thread-list" data-testid="thread-list">
+                    {inboxThreads.length > 0 ? (
+                      inboxThreads.map((thread) => (
+                        <button
+                          key={thread.id}
+                          className={`thread-row ${thread.id === selectedThreadId ? "active" : ""}`}
+                          onClick={() => setSelectedThreadId(thread.id)}
+                          data-testid={`thread-row-${thread.id}`}
+                        >
+                          <div className="thread-row-top">
+                            <strong>{thread.primaryOrganization?.name ?? thread.latestMessage?.fromName ?? thread.subject}</strong>
+                            <span>{formatShortDate(thread.replyState?.replyDueAt ?? thread.lastMessageAt)}</span>
+                          </div>
+                          <div className="thread-row-subject">{thread.subject}</div>
+                          <p>{thread.latestMessage?.bodyPreview ?? "No preview yet."}</p>
+                          <div className="thread-row-meta">
+                            <span className={`status-tag ${replyTone(thread.replyState)}`}>{replyLabel(thread.replyState)}</span>
+                            {thread.latestCategory ? <span className="soft-tag">{categoryLabel(thread.latestCategory)}</span> : null}
+                            {thread.unreadCount > 0 ? <span className="count-tag">{thread.unreadCount}</span> : null}
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="empty-state compact">No threads match this queue yet.</div>
+                    )}
+                  </div>
+                </>
+              ) : null}
+
+              {workspaceView === "followups" ? (
+                <>
+                  <div className="pane-header">
+                    <div>
+                      <div className="eyebrow">Reminder queue</div>
+                      <h3>Follow-ups today</h3>
+                    </div>
+                    <span className="soft-tag">{filteredFollowUps.length} items</span>
+                  </div>
+
+                  <div className="thread-list" data-testid="followup-list">
+                    {filteredFollowUps.length > 0 ? (
+                      filteredFollowUps.map((task) => (
+                        <button
+                          key={task.id}
+                          className={`thread-row ${task.thread.id === selectedThreadId ? "active" : ""}`}
+                          onClick={() => setSelectedThreadId(task.thread.id)}
+                          data-testid={`followup-row-${task.id}`}
+                        >
+                          <div className="thread-row-top">
+                            <strong>{task.organization?.name ?? task.contact?.displayName ?? task.title}</strong>
+                            <span>{formatShortDate(task.dueAt)}</span>
+                          </div>
+                          <div className="thread-row-subject">{task.thread.subject}</div>
+                          <p>{task.note ?? task.title}</p>
+                          <div className="thread-row-meta">
+                            <span className="status-tag warning">Due today</span>
+                            <span className="soft-tag">{task.mailbox.displayName}</span>
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="empty-state compact">No follow-ups due today.</div>
+                    )}
+                  </div>
+                </>
+              ) : null}
+
+              {workspaceView === "accounts" ? (
+                <>
+                  <div className="pane-header">
+                    <div>
+                      <div className="eyebrow">Organizations</div>
+                      <h3>Client pressure map</h3>
+                    </div>
+                    <span className="soft-tag">{filteredOrganizations.length} accounts</span>
+                  </div>
+
+                  <div className="thread-list" data-testid="accounts-list">
+                    {filteredOrganizations.length > 0 ? (
+                      filteredOrganizations.map((organization) => (
+                        <button
+                          key={organization.id}
+                          className={`thread-row ${organization.id === selectedOrganization?.id ? "active" : ""}`}
+                          onClick={() => setSelectedOrganizationId(organization.id)}
+                          data-testid={`organization-row-${organization.id}`}
+                        >
+                          <div className="thread-row-top">
+                            <strong>{organization.name}</strong>
+                            <span>{organization.primaryDomain ?? organization.kind.toLowerCase()}</span>
+                          </div>
+                          <div className="thread-row-meta spread">
+                            <span className="soft-tag">Needs reply {organization.needsReply}</span>
+                            <span className="soft-tag">Waiting {organization.waitingOnThem}</span>
+                            <span className="soft-tag">Follow-ups {organization.followUps}</span>
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="empty-state compact">Organizations appear after the client learns thread participants.</div>
+                    )}
+                  </div>
+                </>
+              ) : null}
+
+              {workspaceView === "live" ? (
+                <>
+                  <div className="pane-header">
+                    <div>
+                      <div className="eyebrow">Thunderbird</div>
+                      <h3>{liveHeaderName}</h3>
+                    </div>
+                    <div className={`status-tag ${thunderbirdStatus?.available ? "active" : "warning"}`}>
+                      {thunderbirdStatus?.available ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                      {thunderbirdStatus?.available ? "Online" : "Offline"}
+                    </div>
+                  </div>
+
+                  <div className="live-chooser">
+                    <select
+                      className="client-input"
+                      value={selectedThunderbirdAccountId ?? ""}
+                      onChange={(event) => setSelectedThunderbirdAccountId(event.target.value || null)}
+                    >
+                      {thunderbirdAccounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      className="client-input"
+                      value={selectedThunderbirdFolderPath ?? ""}
+                      onChange={(event) => setSelectedThunderbirdFolderPath(event.target.value || null)}
+                    >
+                      {thunderbirdFolders.map((folder) => (
+                        <option key={folder.path} value={folder.path}>
+                          {folder.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="thread-list" data-testid="live-message-list">
+                    {thunderbirdMessages.length > 0 ? (
+                      thunderbirdMessages.map((message) => (
+                        <button
+                          key={`${message.folderPath}:${message.id}`}
+                          className={`thread-row ${message.id === selectedThunderbirdMessageId ? "active" : ""}`}
+                          onClick={() => {
+                            setSelectedThunderbirdFolderPath(message.folderPath);
+                            setSelectedThunderbirdMessageId(message.id);
+                          }}
+                        >
+                          <div className="thread-row-top">
+                            <strong>{message.author}</strong>
+                            <span>{formatShortDate(message.date)}</span>
+                          </div>
+                          <div className="thread-row-subject">{message.subject || "(no subject)"}</div>
+                          <p>{message.recipients}</p>
+                          <div className="thread-row-meta">
+                            <span className="soft-tag">{message.folder}</span>
+                            <span className="soft-tag">{message.read ? "read" : "unread"}</span>
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="empty-state compact">
+                        {thunderbirdStatus?.available ? "No live messages loaded yet." : "Thunderbird is not reachable on localhost."}
                       </div>
-                      <span className="meta-pill">
-                        {archiveSurface === "followUpToday" ? filteredFollowUps.length : archiveItems.length} items
-                      </span>
+                    )}
+                  </div>
+                </>
+              ) : null}
+            </section>
+
+            <section className="reader-pane" data-testid="reader-pane">
+              {workspaceView === "accounts" ? (
+                selectedOrganization ? (
+                  <>
+                    <div className="reader-hero">
+                      <div>
+                        <div className="eyebrow">Account overview</div>
+                        <h3 data-testid="organization-title">{selectedOrganization.name}</h3>
+                      </div>
+                      <div className="hero-chip-group">
+                        <span className="soft-tag">{selectedOrganization.primaryDomain ?? selectedOrganization.kind.toLowerCase()}</span>
+                        <span className="soft-tag">Needs reply {selectedOrganization.needsReply}</span>
+                        <span className="soft-tag">Follow-ups {selectedOrganization.followUps}</span>
+                      </div>
                     </div>
 
-                    <div className="thread-items">
-                      {archiveSurface === "followUpToday" ? (
-                        filteredFollowUps.length > 0 ? (
-                          filteredFollowUps.map((task) => (
+                    <div className="reader-card">
+                      <div className="pane-header">
+                        <div>
+                          <div className="eyebrow">Related threads</div>
+                          <h3>Most active conversations</h3>
+                        </div>
+                      </div>
+
+                      <div className="related-thread-grid">
+                        {organizationThreads.length > 0 ? (
+                          organizationThreads.slice(0, 8).map((thread) => (
                             <button
-                              key={task.id}
-                              className={`thread-button ${task.thread.id === selectedThreadId ? "selected" : ""}`}
-                              onClick={() => setSelectedThreadId(task.thread.id)}
+                              key={thread.id}
+                              className={`mini-thread-card ${thread.id === selectedThreadId ? "active" : ""}`}
+                              onClick={() => setSelectedThreadId(thread.id)}
                             >
-                              <div className="list-item">
-                                <div className="list-item-top">
-                                  <strong>{task.title}</strong>
-                                  <ChevronRight size={16} />
-                                </div>
-                                <p className="thread-preview">{task.note ?? task.thread.subject}</p>
-                                <div className="thread-row-meta">
-                                  <span className="meta-pill">{task.organization?.name ?? task.contact?.displayName ?? "Follow-up"}</span>
-                                  <span className="status-pill warning">Due {formatShortDate(task.dueAt)}</span>
-                                </div>
-                              </div>
+                              <strong>{thread.subject}</strong>
+                              <p>{thread.latestMessage?.bodyPreview ?? "No preview yet."}</p>
+                              <span className={`status-tag ${replyTone(thread.replyState)}`}>{replyLabel(thread.replyState)}</span>
                             </button>
                           ))
                         ) : (
-                          <div className="empty-inline">No follow-ups due today.</div>
-                        )
-                      ) : archiveItems.length > 0 ? (
-                        archiveItems.map((thread) => (
-                          <button
-                            key={thread.id}
-                            className={`thread-button ${thread.id === selectedThreadId ? "selected" : ""}`}
-                            onClick={() => setSelectedThreadId(thread.id)}
-                          >
-                            <div className="list-item">
-                              <div className="list-item-top">
-                                <strong>{thread.subject}</strong>
-                                <ChevronRight size={16} />
-                              </div>
-                              <p className="thread-preview">{thread.latestMessage?.bodyPreview ?? "No preview yet."}</p>
-                              <div className="thread-row-meta">
-                                <span className="meta-pill">
-                                  {thread.primaryOrganization?.name ??
-                                    thread.latestMessage?.fromName ??
-                                    thread.latestMessage?.fromAddress ??
-                                    "Unknown sender"}
-                                </span>
-                                <span className={`status-pill ${replyTone(thread.replyState)}`}>{replyLabel(thread.replyState)}</span>
-                              </div>
-                              <div className="thread-row-meta">
-                                {thread.latestCategory ? <span className="mailbox-pill">{categoryLabel(thread.latestCategory)}</span> : null}
-                                <span className="meta-pill">
-                                  {thread.replyState?.replyDueAt
-                                    ? `Due ${formatShortDate(thread.replyState.replyDueAt)}`
-                                    : formatShortDate(thread.lastMessageAt)}
-                                </span>
-                              </div>
-                            </div>
-                          </button>
-                        ))
-                      ) : (
-                        <div className="empty-inline">No queue items match this view yet.</div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="stack-card">
-                    <div className="card-heading">
-                      <div>
-                        <div className="eyebrow">Operations</div>
-                        <h3 className="panel-title">Import and shared inboxes</h3>
+                          <div className="empty-state compact">No related threads found for this organization.</div>
+                        )}
                       </div>
                     </div>
 
-                    <details className="collapsible">
-                      <summary>
-                        <Flag size={16} />
-                        Add shared mailbox
-                      </summary>
-                      <form className="form" onSubmit={(event) => void handleAddSharedMailbox(event)}>
-                        <input
-                          className="input"
-                          placeholder="shared@company.com"
-                          type="email"
-                          value={sharedMailboxEmail}
-                          onChange={(event) => setSharedMailboxEmail(event.target.value)}
-                          required
-                        />
-                        <input
-                          className="input"
-                          placeholder="Optional display name"
-                          value={sharedMailboxName}
-                          onChange={(event) => setSharedMailboxName(event.target.value)}
-                        />
-                        <button className="button secondary" disabled={isMailboxPending || !selectedAccount} type="submit">
-                          <Flag size={16} />
-                          Save mailbox
-                        </button>
-                      </form>
-                    </details>
-
-                    <details className="collapsible">
-                      <summary>
-                        <Upload size={16} />
-                        Import archive
-                      </summary>
-                      <form className="form" onSubmit={(event) => void handleArchiveImport(event)}>
-                        {!selectedMailboxId ? (
-                          <>
-                            <input
-                              className="input"
-                              placeholder="Mailbox email for imported archive"
-                              type="email"
-                              value={importMailboxEmail}
-                              onChange={(event) => setImportMailboxEmail(event.target.value)}
-                              required
-                            />
-                            <input
-                              className="input"
-                              placeholder="Optional mailbox display name"
-                              value={importMailboxName}
-                              onChange={(event) => setImportMailboxName(event.target.value)}
-                            />
-                          </>
-                        ) : null}
-                        <input
-                          className="input"
-                          accept=".olm,.eml,message/rfc822"
-                          type="file"
-                          onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
-                          required
-                        />
-                        <button className="button secondary" disabled={isImportPending} type="submit">
-                          <Upload size={16} />
-                          Import
-                        </button>
-                      </form>
-                    </details>
-
-                    <details className="collapsible">
-                      <summary>
-                        <PlugZap size={16} />
-                        Sync from Thunderbird
-                      </summary>
-                      <form className="form" onSubmit={(event) => void handleThunderbirdImport(event)}>
-                        <div className="muted">
-                          Syncs Inbox and Sent from a discovered Thunderbird mailbox into the workbench. Choose a discovered mailbox below, or override manually for edge cases like a shared inbox that Thunderbird does not expose as a separate identity.
+                    {selectedThread ? (
+                      <div className="reader-card">
+                        <div className="pane-header">
+                          <div>
+                            <div className="eyebrow">Focused thread</div>
+                            <h3 data-testid="reader-subject">{selectedThread.subject}</h3>
+                          </div>
+                          <span className={`status-tag ${replyTone(selectedThread.replyState)}`}>{replyLabel(selectedThread.replyState)}</span>
                         </div>
-                        {thunderbirdDiscoveredMailboxes.length > 0 ? (
-                          <select
-                            className="input"
-                            value={selectedThunderbirdCandidateEmail}
-                            onChange={(event) => {
-                              const nextEmail = event.target.value;
-                              setSelectedThunderbirdCandidateEmail(nextEmail);
-                              const candidate =
-                                thunderbirdDiscoveredMailboxes.find((entry) => entry.mailboxEmail === nextEmail) ?? null;
-                              setThunderbirdImportMailboxEmail(candidate?.isTeamMailbox ? candidate.mailboxEmail : "");
-                              setThunderbirdImportMailboxName("");
-                              setSelectedThunderbirdAccountId(candidate?.thunderbirdAccountId ?? null);
-                            }}
-                          >
-                            {thunderbirdDiscoveredMailboxes.map((candidate) => (
-                              <option key={`${candidate.thunderbirdAccountId}:${candidate.mailboxEmail}`} value={candidate.mailboxEmail}>
-                                {candidate.mailboxDisplayName} · {candidate.mailboxEmail}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <div className="meta-pill">No discovered Thunderbird mailboxes yet. Open Thunderbird and refresh Live first.</div>
-                        )}
-                        <div className="meta-pill">
-                          {selectedThunderbirdCandidateEmail
-                            ? `Target mailbox: ${selectedThunderbirdCandidateEmail}`
-                            : selectedThunderbirdAccount
-                              ? `Selected Thunderbird account: ${selectedThunderbirdAccount.name}`
-                              : "Select a Thunderbird mailbox first."}
-                        </div>
-                        <input
-                          className="input"
-                          placeholder="Optional mailbox email override"
-                          type="email"
-                          value={thunderbirdImportMailboxEmail}
-                          onChange={(event) => setThunderbirdImportMailboxEmail(event.target.value)}
-                        />
-                        <input
-                          className="input"
-                          placeholder="Optional mailbox display name"
-                          value={thunderbirdImportMailboxName}
-                          onChange={(event) => setThunderbirdImportMailboxName(event.target.value)}
-                        />
-                        <button
-                          className="button secondary"
-                          disabled={
-                            isThunderbirdImportPending ||
-                            (!selectedThunderbirdAccountId && thunderbirdDiscoveredMailboxes.length === 0)
-                          }
-                          type="submit"
-                        >
-                          <PlugZap size={16} />
-                          Sync selected mailbox
-                        </button>
-                        <button
-                          className="button secondary"
-                          disabled={isThunderbirdBulkImportPending || thunderbirdDiscoveredMailboxes.length === 0}
-                          onClick={() => void handleThunderbirdBulkImport()}
-                          type="button"
-                        >
-                          <Users size={16} />
-                          Sync all discovered
-                        </button>
-                      </form>
-                    </details>
-
-                    <details className="collapsible">
-                      <summary>
-                        <FolderSync size={16} />
-                        Connected Thunderbird sources
-                      </summary>
-                      {thunderbirdSyncSources.length > 0 ? (
-                        <div className="activity-list" style={{ marginTop: "12px" }}>
-                          {thunderbirdSyncSources.map((source) => (
-                            <div key={source.id} className="activity-row">
-                              <div>
-                                <strong>{source.mailbox.displayName}</strong>
-                                <div className="muted">
-                                  {source.mailbox.emailAddress} · {source.thunderbirdAccountName}
+                        <p className="reader-copy">{selectedThread.replyState?.reason ?? "No reply-state rationale yet."}</p>
+                        <div className="message-stack">
+                          {selectedThread.messages.map((message) => (
+                            <article key={message.id} className="message-card">
+                              <div className="message-card-head">
+                                <div>
+                                  <strong>{message.fromName ?? message.fromAddress ?? "Unknown sender"}</strong>
+                                  <div className="subtle-line">{message.fromAddress ?? "No sender address"}</div>
                                 </div>
+                                <span className="soft-tag">{formatDate(message.receivedAt)}</span>
                               </div>
-                              <span className="meta-pill">
-                                {source.lastSyncedAt ? `Synced ${formatShortDate(source.lastSyncedAt)}` : "Pending"}
-                              </span>
-                            </div>
+                              <p>{message.bodyText || message.bodyPreview || "(empty message)"}</p>
+                            </article>
                           ))}
                         </div>
-                      ) : (
-                        <div className="empty-inline" style={{ marginTop: "12px" }}>
-                          No Thunderbird workbench sources connected yet.
-                        </div>
-                      )}
-                    </details>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="stack-card">
-                    <div className="card-heading">
-                      <div>
-                        <div className="eyebrow">Thunderbird</div>
-                        <h3 className="panel-title">Accounts and folders</h3>
-                      </div>
-                      <div className={`status-pill ${thunderbirdStatus?.available ? "active" : "warning"}`}>
-                        {thunderbirdStatus?.available ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                        {thunderbirdStatus?.available ? "Online" : "Offline"}
-                      </div>
-                    </div>
-
-                    {thunderbirdAccounts.length > 0 ? (
-                      <div className="selector-stack">
-                        {thunderbirdAccounts.map((account) => (
-                          <button
-                            key={account.id}
-                            className={`selector-button ${account.id === selectedThunderbirdAccountId ? "selected" : ""}`}
-                            onClick={() => setSelectedThunderbirdAccountId(account.id)}
-                          >
-                            <div>
-                              <strong>{account.name}</strong>
-                              <div className="muted">{account.identities[0]?.email ?? "No default identity"}</div>
-                            </div>
-                            <span className="mailbox-pill">{account.type}</span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="empty-inline">
-                        {thunderbirdStatus?.available ? "No Thunderbird account detected." : "Install the Thunderbird MCP extension and restart Thunderbird."}
-                      </div>
-                    )}
-
-                    {thunderbirdFolders.length > 0 ? (
-                      <div className="chip-row">
-                        {thunderbirdFolders.map((folder) => (
-                          <button
-                            key={folder.path}
-                            className={`chip-button ${folder.path === selectedThunderbirdFolderPath ? "selected" : ""}`}
-                            onClick={() => setSelectedThunderbirdFolderPath(folder.path)}
-                          >
-                            {folder.name}
-                          </button>
-                        ))}
                       </div>
                     ) : null}
-                  </div>
-
-                  <div className="stack-card">
-                    <div className="card-heading">
-                      <div>
-                        <div className="eyebrow">Messages</div>
-                        <h3 className="panel-title">{liveHeaderName}</h3>
-                      </div>
-                      <span className="meta-pill">{thunderbirdMessages.length} loaded</span>
-                    </div>
-
-                    <div className="thread-items">
-                      {thunderbirdMessages.length > 0 ? (
-                        thunderbirdMessages.map((message) => (
-                          <button
-                            key={`${message.folderPath}:${message.id}`}
-                            className={`thread-button ${message.id === selectedThunderbirdMessageId ? "selected" : ""}`}
-                            onClick={() => {
-                              setSelectedThunderbirdFolderPath(message.folderPath);
-                              setSelectedThunderbirdMessageId(message.id);
-                            }}
-                          >
-                            <div className="list-item">
-                              <div className="list-item-top">
-                                <strong>{message.subject || "(no subject)"}</strong>
-                                <ChevronRight size={16} />
-                              </div>
-                              <p className="thread-preview">{message.author}</p>
-                              <div className="thread-row-meta">
-                                <span className="meta-pill">{message.folder}</span>
-                                <span className="meta-pill">{formatDate(message.date)}</span>
-                              </div>
-                            </div>
-                          </button>
-                        ))
-                      ) : (
-                        <div className="empty-inline">
-                          {thunderbirdStatus?.available ? "No live messages loaded yet." : "Thunderbird bridge is offline."}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </section>
-
-            <section className="detail-pane">
-              {sourceMode === "archive" ? (
-                selectedThread ? (
+                  </>
+                ) : (
+                  <div className="empty-state">Select an organization to see related thread pressure and context.</div>
+                )
+              ) : workspaceView === "live" ? (
+                selectedThunderbirdMessage ? (
                   <>
-                    <div className="detail-card hero-card">
-                      <div className="detail-header">
-                        <div>
-                          <div className="eyebrow">Conversation</div>
-                          <h3 className="detail-title">{selectedThread.subject}</h3>
-                        </div>
-                        <div className={`status-pill ${replyTone(selectedThread.replyState)}`}>{replyLabel(selectedThread.replyState)}</div>
+                    <div className="reader-hero">
+                      <div>
+                        <div className="eyebrow">Live message</div>
+                        <h3 data-testid="reader-subject">{selectedThunderbirdMessage.subject || "(no subject)"}</h3>
                       </div>
-
-                      <div className="hero-metrics">
-                        <div className="hero-metric">
-                          <span className="summary-label">Reply due</span>
-                          <strong>{formatDate(selectedThread.replyState?.replyDueAt)}</strong>
-                        </div>
-                        <div className="hero-metric">
-                          <span className="summary-label">Mailbox</span>
-                          <strong>{selectedThread.mailbox.displayName}</strong>
-                        </div>
-                        <div className="hero-metric">
-                          <span className="summary-label">Confidence</span>
-                          <strong>
-                            {selectedThread.replyState ? `${Math.round(selectedThread.replyState.confidence * 100)}%` : "N/A"}
-                          </strong>
-                        </div>
-                      </div>
-
-                      <p className="workspace-copy">
-                        {selectedThread.replyState?.reason ?? "Reply state has not been computed for this thread yet."}
-                      </p>
-                    </div>
-
-                    <div className="detail-grid">
-                      <div className="detail-card">
-                        <div className="card-heading">
-                          <div>
-                            <div className="eyebrow">People + company</div>
-                            <h3 className="panel-title">Participants</h3>
-                          </div>
-                          <Users size={18} />
-                        </div>
-                        <div className="pill-wrap">
-                          {selectedThread.people.map((person) => (
-                            <span key={person.id} className="person-chip">
-                              <strong>{person.displayName ?? person.emailAddress}</strong>
-                              <span>{person.organization?.name ?? person.emailAddress}</span>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="detail-card">
-                        <div className="card-heading">
-                          <div>
-                            <div className="eyebrow">Follow-ups</div>
-                            <h3 className="panel-title">Pending reminders</h3>
-                          </div>
-                          <Clock3 size={18} />
-                        </div>
-                        {selectedThread.followUpTasks.length > 0 ? (
-                          <div className="activity-list">
-                            {selectedThread.followUpTasks.map((task) => (
-                              <div key={task.id} className="activity-row">
-                                <div>
-                                  <strong>{task.title}</strong>
-                                  <div className="muted">{task.note ?? "Auto-created from thread state."}</div>
-                                </div>
-                                <span className="meta-pill">{formatShortDate(task.dueAt)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="empty-inline">No pending reminder for this thread.</div>
-                        )}
-                      </div>
-
-                      <div className="detail-card">
-                        <div className="card-heading">
-                          <div>
-                            <div className="eyebrow">Accounts</div>
-                            <h3 className="panel-title">By organization</h3>
-                          </div>
-                          <Building2 size={18} />
-                        </div>
-                        {(workbench?.byOrganization.length ?? 0) > 0 ? (
-                          <div className="activity-list">
-                            {workbench?.byOrganization.slice(0, 4).map((organization) => (
-                              <div key={organization.id} className="activity-row">
-                                <div>
-                                  <strong>{organization.name}</strong>
-                                  <div className="muted">{organization.primaryDomain ?? organization.kind.toLowerCase()}</div>
-                                </div>
-                                <span className="meta-pill">{organization.needsReply} open</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="empty-inline">Organizations will appear here after more threads are enriched.</div>
-                        )}
+                      <div className="hero-chip-group">
+                        <span className="soft-tag">{selectedThunderbirdMessage.folder}</span>
+                        <span className="soft-tag">{selectedThunderbirdMessage.read ? "read" : "unread"}</span>
                       </div>
                     </div>
 
-                    <div className="detail-card">
-                      <div className="card-heading">
-                        <div>
-                          <div className="eyebrow">Thread history</div>
-                          <h3 className="panel-title">Messages</h3>
+                    <div className="reader-card">
+                      <div className="message-card">
+                        <div className="message-card-head">
+                          <div>
+                            <strong>{selectedThunderbirdMessage.author}</strong>
+                            <div className="subtle-line">{selectedThunderbirdMessage.recipients}</div>
+                          </div>
+                          <span className="soft-tag">{formatDate(selectedThunderbirdMessage.date)}</span>
                         </div>
-                        <FileText size={18} />
-                      </div>
-
-                      <div className="message-stack">
-                        {selectedThread.messages.map((message) => (
-                          <article key={message.id} className="message-card refined">
-                            <div className="message-headline">
-                              <strong>{message.fromName ?? message.fromAddress ?? "Unknown sender"}</strong>
-                              <span className="meta-pill">{formatDate(message.receivedAt)}</span>
-                            </div>
-                            <div className="thread-row-meta">
-                              <span className="muted">{message.fromAddress ?? "No sender address"}</span>
-                              <div className="thread-row-meta">
-                                {message.category ? <span className="mailbox-pill">{categoryLabel(message.category)}</span> : null}
-                                <span className="meta-pill">{message.importance ?? "normal"}</span>
-                              </div>
-                            </div>
-                            <p className="message-body">{message.bodyText || message.bodyPreview || "(empty message)"}</p>
-                          </article>
-                        ))}
+                        <p>{selectedThunderbirdMessage.body || "(empty message)"}</p>
                       </div>
                     </div>
                   </>
                 ) : (
-                  <div className="detail-empty">
-                    <Inbox size={28} />
-                    <h3>Select a conversation</h3>
-                    <p>The reading pane stays focused on one thread, with people, reply state, and follow-up context inline.</p>
-                  </div>
+                  <div className="empty-state">Choose a live Thunderbird message to inspect it here.</div>
                 )
-              ) : selectedThunderbirdMessage ? (
+              ) : selectedThread ? (
                 <>
-                  <div className="detail-card hero-card">
-                    <div className="detail-header">
-                      <div>
-                        <div className="eyebrow">Live message</div>
-                        <h3 className="detail-title">{selectedThunderbirdMessage.subject || "(no subject)"}</h3>
-                      </div>
-                      <div className="mailbox-pill">{selectedThunderbirdMessage.folder}</div>
+                  <div className="reader-hero">
+                    <div>
+                      <div className="eyebrow">Conversation</div>
+                      <h3 data-testid="reader-subject">{selectedThread.subject}</h3>
+                      <p className="reader-copy">{selectedThread.replyState?.reason ?? "No reply-state rationale yet."}</p>
                     </div>
-                    <p className="workspace-copy">{selectedThunderbirdMessage.author}</p>
+                    <div className="hero-chip-group">
+                      <span className={`status-tag ${replyTone(selectedThread.replyState)}`}>{replyLabel(selectedThread.replyState)}</span>
+                      {selectedThread.messages.at(-1)?.category ? (
+                        <span className="soft-tag">{categoryLabel(selectedThread.messages.at(-1)?.category ?? null)}</span>
+                      ) : null}
+                    </div>
                   </div>
 
-                  <div className="detail-card">
-                    <article className="message-card refined">
-                      <div className="message-headline">
-                        <strong>{selectedThunderbirdMessage.author}</strong>
-                        <span className="meta-pill">{formatDate(selectedThunderbirdMessage.date)}</span>
+                  <div className="reader-summary-grid">
+                    <div className="summary-tile">
+                      <span>Reply due</span>
+                      <strong>{formatDate(selectedThread.replyState?.replyDueAt)}</strong>
+                    </div>
+                    <div className="summary-tile">
+                      <span>Mailbox</span>
+                      <strong>{selectedThread.mailbox.displayName}</strong>
+                    </div>
+                    <div className="summary-tile">
+                      <span>Confidence</span>
+                      <strong>{selectedThread.replyState ? `${Math.round(selectedThread.replyState.confidence * 100)}%` : "N/A"}</strong>
+                    </div>
+                  </div>
+
+                  <div className="reader-card">
+                    <div className="pane-header">
+                      <div>
+                        <div className="eyebrow">Assistant draft pad</div>
+                        <h3>Work the reply without leaving the thread</h3>
                       </div>
-                      <div className="thread-row-meta">
-                        <span className="muted">{selectedThunderbirdMessage.recipients}</span>
-                        <span className="mailbox-pill">{selectedThunderbirdMessage.read ? "read" : "unread"}</span>
+                      <button className="client-button secondary" onClick={() => void copyDraft()}>
+                        <Copy size={16} />
+                        Copy
+                      </button>
+                    </div>
+
+                    <div className="template-row">
+                      {draftTemplates.map((template) => (
+                        <button
+                          key={template.id}
+                          className="template-pill"
+                          onClick={() => setDraftText(template.body)}
+                          type="button"
+                        >
+                          {template.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <textarea
+                      className="draft-pad"
+                      value={draftText}
+                      onChange={(event) => setDraftText(event.target.value)}
+                      data-testid="draft-pad"
+                    />
+                  </div>
+
+                  <div className="reader-card">
+                    <div className="pane-header">
+                      <div>
+                        <div className="eyebrow">Thread history</div>
+                        <h3>Messages</h3>
                       </div>
-                      <p className="message-body">{selectedThunderbirdMessage.body || "(empty message)"}</p>
-                    </article>
+                    </div>
+
+                    <div className="message-stack">
+                      {selectedThread.messages.map((message) => (
+                        <article key={message.id} className="message-card" data-testid={`message-${message.id}`}>
+                          <div className="message-card-head">
+                            <div>
+                              <strong>{message.fromName ?? message.fromAddress ?? "Unknown sender"}</strong>
+                              <div className="subtle-line">{message.fromAddress ?? "No sender address"}</div>
+                            </div>
+                            <div className="message-meta-group">
+                              {message.category ? <span className="soft-tag">{categoryLabel(message.category)}</span> : null}
+                              <span className="soft-tag">{formatDate(message.receivedAt)}</span>
+                            </div>
+                          </div>
+                          <p>{message.bodyText || message.bodyPreview || "(empty message)"}</p>
+                        </article>
+                      ))}
+                    </div>
                   </div>
                 </>
               ) : (
-                <div className="detail-empty">
-                  <PlugZap size={28} />
-                  <h3>No live message selected</h3>
-                  <p>Pick a Thunderbird message from the list to inspect it here.</p>
-                </div>
+                <div className="empty-state">Choose a thread from the left to open the reader and work the conversation.</div>
               )}
             </section>
+
+            <aside className="inspector-pane">
+              {workspaceView !== "live" && selectedThread ? (
+                <>
+                  <div className="inspector-card">
+                    <div className="pane-header">
+                      <div>
+                        <div className="eyebrow">People and company</div>
+                        <h3>Context</h3>
+                      </div>
+                      <Users size={18} />
+                    </div>
+                    <div className="context-list">
+                      {selectedThread.people.map((person) => (
+                        <div key={person.id} className="context-row">
+                          <div>
+                            <strong>{person.displayName ?? person.emailAddress}</strong>
+                            <div className="subtle-line">
+                              {person.organization?.name ?? person.emailAddress}
+                              {person.contact?.roleTitle ? ` · ${person.contact.roleTitle}` : ""}
+                            </div>
+                          </div>
+                          <span className="soft-tag">{person.isMailbox ? "mailbox" : "contact"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="inspector-card">
+                    <div className="pane-header">
+                      <div>
+                        <div className="eyebrow">Follow-up state</div>
+                        <h3>Next step</h3>
+                      </div>
+                      <BrainCircuit size={18} />
+                    </div>
+                    <div className="metric-stack">
+                      <div className="metric-row">
+                        <span>Status</span>
+                        <strong>{replyLabel(selectedThread.replyState)}</strong>
+                      </div>
+                      <div className="metric-row">
+                        <span>Reply due</span>
+                        <strong>{formatShortDate(selectedThread.replyState?.replyDueAt)}</strong>
+                      </div>
+                      <div className="metric-row">
+                        <span>Suggested follow-up</span>
+                        <strong>{formatShortDate(selectedThread.replyState?.suggestedFollowUpAt)}</strong>
+                      </div>
+                    </div>
+                    <p className="inspector-copy">{selectedThread.replyState?.reason ?? "No rationale available yet."}</p>
+                  </div>
+                </>
+              ) : null}
+
+              {workspaceView !== "live" && selectedThread?.followUpTasks.length ? (
+                <div className="inspector-card">
+                  <div className="pane-header">
+                    <div>
+                      <div className="eyebrow">Reminders</div>
+                      <h3>Pending follow-ups</h3>
+                    </div>
+                    <Clock3 size={18} />
+                  </div>
+                  <div className="context-list">
+                    {selectedThread.followUpTasks.map((task) => (
+                      <div key={task.id} className="context-row">
+                        <div>
+                          <strong>{task.title}</strong>
+                          <div className="subtle-line">{task.note ?? "Auto-created from reply state."}</div>
+                        </div>
+                        <span className="soft-tag">{formatShortDate(task.dueAt)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {workspaceView === "live" && selectedThunderbirdMessage ? (
+                <div className="inspector-card">
+                  <div className="pane-header">
+                    <div>
+                      <div className="eyebrow">Live metadata</div>
+                      <h3>Thunderbird details</h3>
+                    </div>
+                    <PanelLeft size={18} />
+                  </div>
+                  <div className="metric-stack">
+                    <div className="metric-row">
+                      <span>Account</span>
+                      <strong>{selectedThunderbirdMessage.accountName ?? "Unknown"}</strong>
+                    </div>
+                    <div className="metric-row">
+                      <span>Thread ID</span>
+                      <strong>{selectedThunderbirdMessage.threadId ?? "None"}</strong>
+                    </div>
+                    <div className="metric-row">
+                      <span>Attachments</span>
+                      <strong>{selectedThunderbirdMessage.attachments.length}</strong>
+                    </div>
+                    <div className="metric-row">
+                      <span>Priority</span>
+                      <strong>{selectedThunderbirdMessage.priority ?? "normal"}</strong>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="inspector-card">
+                <div className="pane-header">
+                  <div>
+                    <div className="eyebrow">Operations</div>
+                    <h3>Mailbox controls</h3>
+                  </div>
+                  <FolderSync size={18} />
+                </div>
+
+                <details className="client-details" open={workspaceView === "live"}>
+                  <summary>
+                    <PlugZap size={16} />
+                    Sync from Thunderbird
+                  </summary>
+                  <form className="client-form" onSubmit={(event) => void handleThunderbirdImport(event)}>
+                    <div className="subtle-line">
+                      Pull Inbox and Sent into the client from a discovered Thunderbird mailbox.
+                    </div>
+                    {thunderbirdDiscoveredMailboxes.length > 0 ? (
+                      <select
+                        className="client-input"
+                        value={selectedThunderbirdCandidateEmail}
+                        onChange={(event) => {
+                          const nextEmail = event.target.value;
+                          setSelectedThunderbirdCandidateEmail(nextEmail);
+                          const candidate =
+                            thunderbirdDiscoveredMailboxes.find((entry) => entry.mailboxEmail === nextEmail) ?? null;
+                          setThunderbirdImportMailboxEmail(candidate?.isTeamMailbox ? candidate.mailboxEmail : "");
+                          setThunderbirdImportMailboxName("");
+                          setSelectedThunderbirdAccountId(candidate?.thunderbirdAccountId ?? null);
+                        }}
+                      >
+                        {thunderbirdDiscoveredMailboxes.map((candidate) => (
+                          <option key={`${candidate.thunderbirdAccountId}:${candidate.mailboxEmail}`} value={candidate.mailboxEmail}>
+                            {candidate.mailboxDisplayName} · {candidate.mailboxEmail}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="soft-panel">No discovered Thunderbird mailboxes yet.</div>
+                    )}
+                    <input
+                      className="client-input"
+                      placeholder="Optional mailbox email override"
+                      type="email"
+                      value={thunderbirdImportMailboxEmail}
+                      onChange={(event) => setThunderbirdImportMailboxEmail(event.target.value)}
+                    />
+                    <input
+                      className="client-input"
+                      placeholder="Optional mailbox display name"
+                      value={thunderbirdImportMailboxName}
+                      onChange={(event) => setThunderbirdImportMailboxName(event.target.value)}
+                    />
+                    <button
+                      className="client-button secondary"
+                      disabled={isThunderbirdImportPending || (!selectedThunderbirdAccountId && thunderbirdDiscoveredMailboxes.length === 0)}
+                      type="submit"
+                    >
+                      <PlugZap size={16} />
+                      Sync selected mailbox
+                    </button>
+                    <button
+                      className="client-button secondary"
+                      disabled={isThunderbirdBulkImportPending || thunderbirdDiscoveredMailboxes.length === 0}
+                      onClick={() => void handleThunderbirdBulkImport()}
+                      type="button"
+                    >
+                      <Users size={16} />
+                      Sync all discovered
+                    </button>
+                  </form>
+                </details>
+
+                <details className="client-details">
+                  <summary>
+                    <Upload size={16} />
+                    Import archive
+                  </summary>
+                  <form className="client-form" onSubmit={(event) => void handleArchiveImport(event)}>
+                    {!selectedMailboxId ? (
+                      <>
+                        <input
+                          className="client-input"
+                          placeholder="Mailbox email for imported archive"
+                          type="email"
+                          value={importMailboxEmail}
+                          onChange={(event) => setImportMailboxEmail(event.target.value)}
+                          required
+                        />
+                        <input
+                          className="client-input"
+                          placeholder="Optional mailbox display name"
+                          value={importMailboxName}
+                          onChange={(event) => setImportMailboxName(event.target.value)}
+                        />
+                      </>
+                    ) : null}
+                    <input
+                      className="client-input"
+                      accept=".olm,.eml,message/rfc822"
+                      type="file"
+                      onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
+                      required
+                    />
+                    <button className="client-button secondary" disabled={isImportPending} type="submit">
+                      <Upload size={16} />
+                      Import archive
+                    </button>
+                  </form>
+                </details>
+
+                <details className="client-details">
+                  <summary>
+                    <Archive size={16} />
+                    Add shared mailbox
+                  </summary>
+                  <form className="client-form" onSubmit={(event) => void handleAddSharedMailbox(event)}>
+                    <input
+                      className="client-input"
+                      placeholder="shared@company.com"
+                      type="email"
+                      value={sharedMailboxEmail}
+                      onChange={(event) => setSharedMailboxEmail(event.target.value)}
+                      required
+                    />
+                    <input
+                      className="client-input"
+                      placeholder="Optional display name"
+                      value={sharedMailboxName}
+                      onChange={(event) => setSharedMailboxName(event.target.value)}
+                    />
+                    <button className="client-button secondary" disabled={isMailboxPending || !selectedAccount} type="submit">
+                      <SendHorizontal size={16} />
+                      Save mailbox
+                    </button>
+                  </form>
+                </details>
+              </div>
+
+              <div className="inspector-card">
+                <div className="pane-header">
+                  <div>
+                    <div className="eyebrow">Status</div>
+                    <h3>System health</h3>
+                  </div>
+                  {thunderbirdStatus?.available ? <CheckCircle2 size={18} /> : <ShieldAlert size={18} />}
+                </div>
+                <div className="metric-stack">
+                  <div className="metric-row">
+                    <span>Thunderbird</span>
+                    <strong>{thunderbirdStatus?.available ? "online" : "offline"}</strong>
+                  </div>
+                  <div className="metric-row">
+                    <span>Selected mailbox</span>
+                    <strong>{selectedMailbox?.displayName ?? "None"}</strong>
+                  </div>
+                  <div className="metric-row">
+                    <span>Latest import</span>
+                    <strong>{selectedImportSummary?.sourceFilename ?? "None"}</strong>
+                  </div>
+                </div>
+                <div className="subtle-line">{thunderbirdStatus?.bridgeUrl ?? "http://127.0.0.1:8765"}</div>
+              </div>
+
+              {thunderbirdSyncSources.length > 0 ? (
+                <div className="inspector-card">
+                  <div className="pane-header">
+                    <div>
+                      <div className="eyebrow">Connected sources</div>
+                      <h3>Thunderbird mailboxes</h3>
+                    </div>
+                    <PlugZap size={18} />
+                  </div>
+                  <div className="context-list">
+                    {thunderbirdSyncSources.map((source) => (
+                      <div key={source.id} className="context-row">
+                        <div>
+                          <strong>{source.mailbox.displayName}</strong>
+                          <div className="subtle-line">{source.mailbox.emailAddress}</div>
+                        </div>
+                        <span className="soft-tag">{source.lastSyncedAt ? formatShortDate(source.lastSyncedAt) : "Pending"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </aside>
           </div>
         </section>
       </div>

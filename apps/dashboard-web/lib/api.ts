@@ -260,6 +260,20 @@ export type ThunderbirdMessageSummary = {
 };
 
 export type ThunderbirdMessageDetail = ThunderbirdMessageSummary & {
+  accountId: string | null;
+  accountName: string | null;
+  serverType: string | null;
+  folderType: string | null;
+  messageKey: number | null;
+  threadId: number | null;
+  threadParent: number | null;
+  references: string[];
+  inReplyTo: string | null;
+  size: number | null;
+  lineCount: number | null;
+  priority: string | null;
+  keywords: string;
+  charset: string | null;
   body: string;
   bodyIsHtml: boolean;
   attachments: Array<{
@@ -287,6 +301,9 @@ export type ThunderbirdSyncResult = {
       path: string;
       name: string;
       type: string;
+      availableMessages: number;
+      importedMessages: number;
+      unreadMessages: number;
     }>;
   };
 };

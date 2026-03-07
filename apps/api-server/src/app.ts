@@ -12,12 +12,20 @@ import { registerThreadRoutes } from "./routes/threads";
 
 export function buildApp() {
   const env = getEnv();
+  const dashboardOrigin = new URL(env.DASHBOARD_URL);
+  const allowedOrigins = Array.from(
+    new Set([
+      env.DASHBOARD_URL,
+      `${dashboardOrigin.protocol}//localhost:${dashboardOrigin.port}`,
+      `${dashboardOrigin.protocol}//127.0.0.1:${dashboardOrigin.port}`
+    ])
+  );
   const app = Fastify({
     logger: true
   });
 
   app.register(cors, {
-    origin: [env.DASHBOARD_URL]
+    origin: allowedOrigins
   });
 
   app.register(multipart, {
