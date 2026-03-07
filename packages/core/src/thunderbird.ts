@@ -79,7 +79,24 @@ export type ThunderbirdMessageSummary = {
   flagged: boolean;
 };
 
-export type ThunderbirdMessageDetail = ThunderbirdMessageSummary & {
+export type ThunderbirdMessageMetadata = ThunderbirdMessageSummary & {
+  accountId: string | null;
+  accountName: string | null;
+  serverType: string | null;
+  folderType: string | null;
+  messageKey: number | null;
+  threadId: number | null;
+  threadParent: number | null;
+  references: string[];
+  inReplyTo: string | null;
+  size: number | null;
+  lineCount: number | null;
+  priority: string | null;
+  keywords: string;
+  charset: string | null;
+};
+
+export type ThunderbirdMessageDetail = ThunderbirdMessageMetadata & {
   body: string;
   bodyIsHtml: boolean;
   attachments: Array<{
@@ -87,6 +104,49 @@ export type ThunderbirdMessageDetail = ThunderbirdMessageSummary & {
     contentType: string;
     size: number | null;
   }>;
+};
+
+export type ThunderbirdFolderMessagesPage = {
+  folder: {
+    name: string;
+    path: string;
+    type: string;
+  };
+  totalMessages: number;
+  offset: number;
+  returned: number;
+  messages: ThunderbirdMessageSummary[];
+};
+
+export type ThunderbirdFolderStatistics = {
+  folder: {
+    name: string;
+    path: string;
+    type: string;
+    accountId: string | null;
+    accountName: string | null;
+  };
+  includeSubfolders: boolean;
+  foldersScanned: Array<{
+    name: string;
+    path: string;
+    type: string;
+    totalMessages: number;
+    unreadMessages: number;
+  }>;
+  totalMessages: number;
+  unreadMessages: number;
+  readMessages: number;
+  flaggedMessages: number;
+  oldestMessageDate: string | null;
+  newestMessageDate: string | null;
+};
+
+export type ThunderbirdRawMessage = ThunderbirdMessageMetadata & {
+  source: string;
+  sourceBytes: number;
+  returnedBytes: number;
+  truncated: boolean;
 };
 
 type ToolsListResult = {
@@ -113,7 +173,7 @@ type ThunderbirdMailboxCandidate = {
 };
 
 const DEFAULT_PROFILE_ROOT = join(homedir(), "Library", "Thunderbird", "Profiles");
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const TEAM_SHARED_MAILBOX = "hey@razzinteractive.com";
 
 function normalizeAddress(address?: string | null) {
@@ -192,6 +252,76 @@ function conversationKey(input: {
   return `tb:subject:${normalizedSubject(input.subject)}:${counterparty}`;
 }
 
+function conversationKeyFromThunderbird(input: {
+  subject: string;
+  folderType: string;
+  fromAddress?: string | null;
+  recipients: RecipientSummary[];
+  mailboxEmail: string;
+  accountId?: string | null;
+  threadId?: number | null;
+  references?: string[];
+  inReplyTo?: string | null;
+}) {
+  if (typeof input.threadId === "number") {
+    return `tb:thread:${input.accountId ?? input.mailboxEmail}:${input.threadId}`;
+  }
+
+  const referenceRoot = input.references?.[0] ?? input.inReplyTo ?? null;
+  if (referenceRoot) {
+    return `tb:ref:${referenceRoot.toLowerCase()}`;
+  }
+
+  return conversationKey(input);
+}
+
+function parseRawHeaders(source: string) {
+  const [headerBlock = ""] = source.split(/\r?\n\r?\n/, 1);
+  const headers = new Map<string, string>();
+  let currentName = "";
+
+  for (const line of headerBlock.split(/\r?\n/)) {
+    if (!line) {
+      break;
+    }
+
+    if (/^[ \t]/.test(line) && currentName) {
+      headers.set(currentName, `${headers.get(currentName) ?? ""} ${line.trim()}`.trim());
+      continue;
+    }
+
+    const separatorIndex = line.indexOf(":");
+    if (separatorIndex < 0) {
+      continue;
+    }
+
+    currentName = line.slice(0, separatorIndex).trim().toLowerCase();
+    headers.set(currentName, line.slice(separatorIndex + 1).trim());
+  }
+
+  return headers;
+}
+
+function rawHeaderValue(headers: Map<string, string>, ...names: string[]) {
+  for (const name of names) {
+    const value = headers.get(name.toLowerCase());
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function needsRawHeaderFallback(message: ThunderbirdMessageDetail) {
+  return (
+    !message.subject?.trim() ||
+    !message.author?.trim() ||
+    (!message.recipients?.trim() && !message.ccList?.trim()) ||
+    (!message.references?.length && !message.inReplyTo && message.threadId == null)
+  );
+}
+
 function mailboxKindForTarget(mailboxEmail: string, identityEmail?: string | null) {
   const normalizedMailbox = normalizeAddress(mailboxEmail);
   const normalizedIdentity = normalizeAddress(identityEmail);
@@ -250,6 +380,10 @@ function normalizedMessageFromThunderbird(params: {
   folderType: string;
   mailboxEmail: string;
   mailboxName: string;
+  accountId?: string | null;
+  threadId?: number | null;
+  references?: string[];
+  inReplyTo?: string | null;
   author?: string | null;
   recipients?: string | null;
   ccList?: string | null;
@@ -276,12 +410,16 @@ function normalizedMessageFromThunderbird(params: {
 
   return {
     externalMessageId,
-    externalConversationId: conversationKey({
+    externalConversationId: conversationKeyFromThunderbird({
       subject,
       folderType: params.folderType,
       fromAddress: from?.address,
       recipients: toRecipients,
-      mailboxEmail: params.mailboxEmail
+      mailboxEmail: params.mailboxEmail,
+      accountId: params.accountId,
+      threadId: params.threadId,
+      references: params.references,
+      inReplyTo: params.inReplyTo
     }),
     internetMessageId: params.messageId || null,
     subject,
@@ -416,11 +554,63 @@ export async function searchThunderbirdMessages(input: {
   return callTool<ThunderbirdMessageSummary[]>("searchMessages", input);
 }
 
+export async function listThunderbirdMessagesInFolder(input: {
+  folderPath: string;
+  maxResults?: number;
+  offset?: number;
+  sortOrder?: "asc" | "desc";
+  unreadOnly?: boolean;
+  flaggedOnly?: boolean;
+  includeSubfolders?: boolean;
+}) {
+  return callTool<ThunderbirdFolderMessagesPage>("listMessagesInFolder", input);
+}
+
+export async function getThunderbirdFolderStatistics(folderPath: string, includeSubfolders = false) {
+  return callTool<ThunderbirdFolderStatistics>("getFolderStatistics", {
+    folderPath,
+    includeSubfolders
+  });
+}
+
+export async function getThunderbirdMessageMetadata(messageId: string, folderPath: string) {
+  return callTool<ThunderbirdMessageMetadata>("getMessageMetadata", {
+    messageId,
+    folderPath
+  });
+}
+
 export async function getThunderbirdMessageDetail(messageId: string, folderPath: string) {
   return callTool<ThunderbirdMessageDetail>("getMessage", {
     messageId,
     folderPath
   });
+}
+
+export async function getThunderbirdRawMessage(messageId: string, folderPath: string, maxBytes?: number) {
+  return callTool<ThunderbirdRawMessage>("getRawMessage", {
+    messageId,
+    folderPath,
+    ...(typeof maxBytes === "number" ? { maxBytes } : {})
+  });
+}
+
+export async function getThunderbirdThreadMessages(input: {
+  messageId: string;
+  folderPath: string;
+  includeBodies?: boolean;
+  maxResults?: number;
+}) {
+  return callTool<{
+    threadAnchor: {
+      messageId: string;
+      folderPath: string;
+      subject: string;
+      threadId: number | null;
+    };
+    returned: number;
+    messages: Array<ThunderbirdMessageMetadata | ThunderbirdMessageDetail>;
+  }>("getThreadMessages", input);
 }
 
 export async function thunderbirdSetupProbe() {
@@ -467,6 +657,60 @@ export async function listThunderbirdDiscoveredMailboxes() {
     kind: mailboxKindForTarget(candidate.mailboxEmail, candidate.thunderbirdIdentityEmail),
     isTeamMailbox: candidate.mailboxEmail === TEAM_SHARED_MAILBOX
   }));
+}
+
+async function loadThunderbirdFolderMessagesForSync(
+  folder: ThunderbirdFolder,
+  daysBack: number,
+  maxMessages: number
+) {
+  const stats = await getThunderbirdFolderStatistics(folder.path);
+  const cutoffTime = Date.now() - daysBack * 24 * 60 * 60 * 1000;
+  const collected: ThunderbirdMessageSummary[] = [];
+  let offset = 0;
+  let hitCutoff = false;
+
+  while (collected.length < maxMessages && offset < stats.totalMessages) {
+    const remaining = maxMessages - collected.length;
+    const page = await listThunderbirdMessagesInFolder({
+      folderPath: folder.path,
+      maxResults: Math.min(remaining, 100),
+      offset,
+      sortOrder: "desc"
+    });
+
+    if (page.messages.length === 0) {
+      break;
+    }
+
+    for (const summary of page.messages) {
+      const messageTime = summary.date ? new Date(summary.date).getTime() : Number.NaN;
+      if (Number.isFinite(messageTime) && messageTime < cutoffTime) {
+        hitCutoff = true;
+        break;
+      }
+
+      collected.push(summary);
+      if (collected.length >= maxMessages) {
+        break;
+      }
+    }
+
+    if (hitCutoff || page.returned < Math.min(remaining, 100)) {
+      break;
+    }
+
+    offset += page.returned;
+  }
+
+  return {
+    stats,
+    messages: collected.sort((left, right) => {
+      const leftTime = new Date(left.date ?? 0).getTime();
+      const rightTime = new Date(right.date ?? 0).getTime();
+      return leftTime - rightTime;
+    })
+  };
 }
 
 export async function syncThunderbirdAccountIntoWorkbench(input: {
@@ -520,37 +764,76 @@ export async function syncThunderbirdAccountIntoWorkbench(input: {
   }
 
   let importedMessages = 0;
+  const syncedFolders: Array<{
+    path: string;
+    name: string;
+    type: string;
+    availableMessages: number;
+    importedMessages: number;
+    unreadMessages: number;
+  }> = [];
 
   try {
     for (const folder of targetFolders) {
-      const summaries = await getThunderbirdRecentMessages({
-        folderPath: folder.path,
-        daysBack: input.daysBack ?? 45,
-        maxResults: input.maxMessagesPerFolder ?? 250
-      });
+      const folderSync = await loadThunderbirdFolderMessagesForSync(
+        folder,
+        input.daysBack ?? 45,
+        input.maxMessagesPerFolder ?? 250
+      );
+      let importedForFolder = 0;
 
-      for (const summary of summaries) {
+      for (const summary of folderSync.messages) {
         const detail = await getThunderbirdMessageDetail(summary.id, summary.folderPath);
+        let rawHeaders: Map<string, string> | null = null;
+
+        if (needsRawHeaderFallback(detail)) {
+          const rawMessage = await getThunderbirdRawMessage(summary.id, summary.folderPath, 250000);
+          rawHeaders = parseRawHeaders(rawMessage.source);
+        }
+
         const normalized = normalizedMessageFromThunderbird({
           messageId: summary.id,
           folderPath: summary.folderPath,
           folderType: folder.type,
           mailboxEmail,
           mailboxName: mailboxDisplayName,
-          author: detail.author ?? summary.author,
-          recipients: detail.recipients ?? summary.recipients,
-          ccList: detail.ccList ?? summary.ccList,
-          subject: detail.subject ?? summary.subject,
-          date: detail.date ?? summary.date,
+          accountId: detail.accountId,
+          threadId: detail.threadId,
+          references: detail.references,
+          inReplyTo: detail.inReplyTo,
+          author: detail.author ?? summary.author ?? rawHeaderValue(rawHeaders ?? new Map(), "from"),
+          recipients: detail.recipients ?? summary.recipients ?? rawHeaderValue(rawHeaders ?? new Map(), "to"),
+          ccList: detail.ccList ?? summary.ccList ?? rawHeaderValue(rawHeaders ?? new Map(), "cc"),
+          subject: detail.subject ?? summary.subject ?? rawHeaderValue(rawHeaders ?? new Map(), "subject"),
+          date: detail.date ?? summary.date ?? rawHeaderValue(rawHeaders ?? new Map(), "date"),
           body: detail.body,
-          read: summary.read,
+          read: detail.read,
           attachments: detail.attachments
         });
 
         await ingestNormalizedMessage(mailboxRecord, normalized);
         importedMessages += 1;
+        importedForFolder += 1;
       }
+
+      syncedFolders.push({
+        path: folder.path,
+        name: folder.name,
+        type: folder.type,
+        availableMessages: folderSync.stats.totalMessages,
+        importedMessages: importedForFolder,
+        unreadMessages: folderSync.stats.unreadMessages
+      });
     }
+
+    await prisma.thread.deleteMany({
+      where: {
+        mailboxId: mailbox.id,
+        messages: {
+          none: {}
+        }
+      }
+    });
 
     const syncSource = await prisma.thunderbirdSyncSource.upsert({
       where: {
@@ -597,11 +880,7 @@ export async function syncThunderbirdAccountIntoWorkbench(input: {
       account: archiveAccount,
       mailbox: mailboxRecord,
       importedMessages,
-      folders: targetFolders.map((folder) => ({
-        path: folder.path,
-        name: folder.name,
-        type: folder.type
-      })),
+      folders: syncedFolders,
       syncSource
     };
   } catch (error) {
