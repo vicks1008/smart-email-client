@@ -2,17 +2,22 @@
 
 import {
   Archive,
+  Building2,
   CheckCircle2,
   ChevronRight,
+  Clock3,
   Flag,
   FolderSync,
   Inbox,
+  LayoutGrid,
   MailPlus,
   PlugZap,
   RefreshCcw,
+  SendHorizontal,
   ShieldAlert,
   Sparkles,
-  Upload
+  Upload,
+  Users
 } from "lucide-react";
 import { startTransition, useDeferredValue, useEffect, useMemo, useState, useTransition, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -28,6 +33,7 @@ import {
   fetchThunderbirdMessage,
   fetchThunderbirdRecentMessages,
   fetchThunderbirdStatus,
+  fetchWorkbench,
   getMicrosoftConnectUrl,
   queueSync,
   searchThunderbirdMessages,
@@ -40,10 +46,12 @@ import {
   type ThunderbirdFolder,
   type ThunderbirdMessageDetail,
   type ThunderbirdMessageSummary,
-  type ThunderbirdStatus
+  type ThunderbirdStatus,
+  type WorkbenchData
 } from "../lib/api";
 
 type SourceMode = "thunderbird" | "archive";
+type ArchiveSurface = "needsReply" | "waitingOnThem" | "followUpToday" | "allThreads";
 
 function formatDate(value: string | null | undefined) {
   if (!value) {
@@ -58,12 +66,62 @@ function formatDate(value: string | null | undefined) {
   }).format(new Date(value));
 }
 
+function formatShortDate(value: string | null | undefined) {
+  if (!value) {
+    return "No deadline";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric"
+  }).format(new Date(value));
+}
+
 function statusClass(status: AccountSummary["status"]) {
   return status === "ACTIVE" ? "active" : "warning";
 }
 
+function replyTone(state: ThreadSummary["replyState"]) {
+  if (!state) {
+    return "neutral";
+  }
+
+  if (state.needsReply && state.isOverdue) {
+    return "danger";
+  }
+
+  if (state.needsReply || state.waitingOnThem) {
+    return "warning";
+  }
+
+  return "active";
+}
+
+function replyLabel(state: ThreadSummary["replyState"]) {
+  if (!state) {
+    return "Unclassified";
+  }
+
+  switch (state.status) {
+    case "NEEDS_REPLY":
+      return state.isOverdue ? "Overdue reply" : "Needs reply";
+    case "WAITING_ON_THEM":
+      return "Waiting on them";
+    case "FOLLOW_UP_LATER":
+      return "Follow up later";
+    case "CLOSED_LOOP":
+    default:
+      return "Closed loop";
+  }
+}
+
+function categoryLabel(category: ThreadSummary["latestCategory"]) {
+  return category?.label.toLowerCase().replace(/_/g, " ") ?? "uncategorized";
+}
+
 export function MailApp() {
   const [sourceMode, setSourceMode] = useState<SourceMode>("thunderbird");
+  const [archiveSurface, setArchiveSurface] = useState<ArchiveSurface>("needsReply");
   const [search, setSearch] = useState("");
 
   const [thunderbirdStatus, setThunderbirdStatus] = useState<ThunderbirdStatus | null>(null);
@@ -80,6 +138,7 @@ export function MailApp() {
   const [selectedMailboxId, setSelectedMailboxId] = useState<string | null>(null);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [imports, setImports] = useState<ImportJobSummary[]>([]);
+  const [workbench, setWorkbench] = useState<WorkbenchData | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedThread, setSelectedThread] = useState<ThreadDetail | null>(null);
 
@@ -96,6 +155,10 @@ export function MailApp() {
   const selectedAccount = useMemo(
     () => accounts.find((account) => account.id === selectedAccountId) ?? null,
     [accounts, selectedAccountId]
+  );
+  const selectedMailbox = useMemo(
+    () => selectedAccount?.mailboxes.find((mailbox) => mailbox.id === selectedMailboxId) ?? null,
+    [selectedAccount, selectedMailboxId]
   );
   const selectedThunderbirdAccount = useMemo(
     () => thunderbirdAccounts.find((account) => account.id === selectedThunderbirdAccountId) ?? null,
@@ -152,21 +215,16 @@ export function MailApp() {
   useEffect(() => {
     if (!selectedMailboxId) {
       setThreads([]);
-      setImports([]);
-      setSelectedThreadId(null);
       setSelectedThread(null);
+      void refreshWorkbench();
+      void refreshImports(undefined, selectedAccountId ?? undefined);
       return;
     }
 
     void refreshThreads(selectedMailboxId);
+    void refreshWorkbench(selectedMailboxId);
     void refreshImports(selectedMailboxId, selectedAccountId ?? undefined);
-  }, [selectedMailboxId]);
-
-  useEffect(() => {
-    if (!selectedMailboxId && selectedAccountId) {
-      void refreshImports(undefined, selectedAccountId);
-    }
-  }, [selectedAccountId, selectedMailboxId]);
+  }, [selectedMailboxId, selectedAccountId]);
 
   useEffect(() => {
     if (!selectedThreadId) {
@@ -284,12 +342,17 @@ export function MailApp() {
     try {
       const data = await fetchThreads(mailboxId);
       setThreads(data.threads);
-      setSelectedThreadId((current) => {
-        const retained = data.threads.find((thread) => thread.id === current)?.id;
-        return retained ?? data.threads[0]?.id ?? null;
-      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load threads.");
+    }
+  }
+
+  async function refreshWorkbench(mailboxId?: string) {
+    try {
+      const data = await fetchWorkbench(mailboxId);
+      setWorkbench(data);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load workbench.");
     }
   }
 
@@ -327,6 +390,7 @@ export function MailApp() {
         const result = await queueSync(selectedAccount.id);
         toast.success(`Queued ${result.queued} mailbox sync${result.queued === 1 ? "" : "s"}.`);
         await refreshArchiveAccounts();
+        await refreshWorkbench(selectedMailboxId ?? undefined);
         if (selectedMailboxId) {
           await refreshThreads(selectedMailboxId);
         }
@@ -385,6 +449,7 @@ export function MailApp() {
         setImportMailboxEmail("");
         setImportMailboxName("");
         await refreshArchiveAccounts();
+        await refreshWorkbench(selectedMailboxId ?? undefined);
         await refreshImports(selectedMailboxId ?? undefined, selectedAccountId ?? undefined);
         if (selectedMailboxId) {
           await refreshThreads(selectedMailboxId);
@@ -395,7 +460,7 @@ export function MailApp() {
     });
   }
 
-  const archiveThreads = useMemo(() => {
+  const allArchiveThreads = useMemo(() => {
     const normalizedQuery = deferredSearch.trim().toLowerCase();
 
     if (!normalizedQuery) {
@@ -407,20 +472,118 @@ export function MailApp() {
         .map((participant) => `${participant.name} ${participant.address}`)
         .join(" ")
         .toLowerCase();
+      const organization = `${thread.primaryOrganization?.name ?? ""} ${thread.primaryOrganization?.primaryDomain ?? ""}`.toLowerCase();
 
       return (
         thread.subject.toLowerCase().includes(normalizedQuery) ||
         thread.latestMessage?.bodyPreview.toLowerCase().includes(normalizedQuery) ||
-        participants.includes(normalizedQuery)
+        participants.includes(normalizedQuery) ||
+        organization.includes(normalizedQuery)
       );
     });
   }, [deferredSearch, threads]);
+
+  const filteredWorkbenchNeedsReply = useMemo(() => {
+    const normalizedQuery = deferredSearch.trim().toLowerCase();
+    const items = workbench?.needsReply ?? [];
+
+    if (!normalizedQuery) {
+      return items;
+    }
+
+    return items.filter((thread) => {
+      const haystack = [
+        thread.subject,
+        thread.latestMessage?.bodyPreview ?? "",
+        thread.primaryOrganization?.name ?? "",
+        thread.primaryOrganization?.primaryDomain ?? "",
+        thread.latestMessage?.fromName ?? "",
+        thread.latestMessage?.fromAddress ?? ""
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedQuery);
+    });
+  }, [deferredSearch, workbench]);
+
+  const filteredWorkbenchWaiting = useMemo(() => {
+    const normalizedQuery = deferredSearch.trim().toLowerCase();
+    const items = workbench?.waitingOnThem ?? [];
+
+    if (!normalizedQuery) {
+      return items;
+    }
+
+    return items.filter((thread) => {
+      const haystack = [
+        thread.subject,
+        thread.latestMessage?.bodyPreview ?? "",
+        thread.primaryOrganization?.name ?? "",
+        thread.primaryOrganization?.primaryDomain ?? ""
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedQuery);
+    });
+  }, [deferredSearch, workbench]);
+
+  const filteredFollowUps = useMemo(() => {
+    const normalizedQuery = deferredSearch.trim().toLowerCase();
+    const items = workbench?.followUpToday ?? [];
+
+    if (!normalizedQuery) {
+      return items;
+    }
+
+    return items.filter((task) =>
+      [task.title, task.note ?? "", task.organization?.name ?? "", task.thread.subject, task.contact?.displayName ?? ""]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery)
+    );
+  }, [deferredSearch, workbench]);
+
+  useEffect(() => {
+    if (sourceMode !== "archive") {
+      return;
+    }
+
+    if (archiveSurface === "followUpToday") {
+      setSelectedThreadId((current) => {
+        const retained = filteredFollowUps.find((task) => task.thread.id === current)?.thread.id;
+        return retained ?? filteredFollowUps[0]?.thread.id ?? null;
+      });
+      return;
+    }
+
+    const nextThreads =
+      archiveSurface === "needsReply"
+        ? filteredWorkbenchNeedsReply
+        : archiveSurface === "waitingOnThem"
+          ? filteredWorkbenchWaiting
+          : allArchiveThreads;
+
+    setSelectedThreadId((current) => {
+      const retained = nextThreads.find((thread) => thread.id === current)?.id;
+      return retained ?? nextThreads[0]?.id ?? null;
+    });
+  }, [allArchiveThreads, archiveSurface, filteredFollowUps, filteredWorkbenchNeedsReply, filteredWorkbenchWaiting, sourceMode]);
 
   const liveHeaderName =
     thunderbirdFolders.find((folder) => folder.path === selectedThunderbirdFolderPath)?.name ??
     selectedThunderbirdAccount?.name ??
     "Thunderbird";
   const liveMessageAttachments = selectedThunderbirdMessage?.attachments ?? [];
+  const archiveListTitle =
+    archiveSurface === "needsReply"
+      ? "Needs Reply"
+      : archiveSurface === "waitingOnThem"
+        ? "Waiting on Client"
+        : archiveSurface === "followUpToday"
+          ? "Follow Up Today"
+          : "All Threads";
 
   return (
     <main className="mail-shell">
@@ -431,13 +594,13 @@ export function MailApp() {
               <Sparkles size={22} />
             </div>
             <div>
-              <div className="eyebrow">Phase 1</div>
+              <div className="eyebrow">Phase 2</div>
               <h1 className="title">Smart Mail</h1>
             </div>
           </div>
 
           <p className="copy">
-            Thunderbird is now the preferred live mailbox provider. Archive import and Microsoft OAuth stay available as fallback ingestion paths.
+            Intelligence is now layered on top of stored mail: people, organizations, reply obligations, and follow-up queues.
           </p>
 
           <div className="source-tabs">
@@ -453,7 +616,7 @@ export function MailApp() {
               onClick={() => setSourceMode("archive")}
             >
               <Archive size={16} />
-              Imported Mail
+              Intelligence Hub
             </button>
           </div>
 
@@ -483,7 +646,7 @@ export function MailApp() {
                 {thunderbirdStatus?.available ? (
                   <>
                     <div className="copy">
-                      Live folders and messages come from your local Thunderbird profile, not directly from Microsoft Graph.
+                      Live folders and messages come from your local Thunderbird profile while the archive side powers Phase 2 intelligence.
                     </div>
                     <div className="mailbox-list">
                       {thunderbirdAccounts.map((account) => (
@@ -498,9 +661,7 @@ export function MailApp() {
                               <strong>{account.name}</strong>
                             </div>
                             <div className="mailbox-pill">{account.type}</div>
-                            <div className="muted">
-                              {account.identities[0]?.email ?? "No identity detected"}
-                            </div>
+                            <div className="muted">{account.identities[0]?.email ?? "No identity detected"}</div>
                           </div>
                         </button>
                       ))}
@@ -511,12 +672,6 @@ export function MailApp() {
                     <PlugZap size={24} />
                     <div>Thunderbird MCP is not reachable yet.</div>
                     <div>{thunderbirdStatus?.error ?? "Install the extension XPI in Thunderbird and restart the app."}</div>
-                    {thunderbirdStatus?.extensionXpiPath ? (
-                      <div className="muted">{thunderbirdStatus.extensionXpiPath}</div>
-                    ) : null}
-                    {thunderbirdStatus?.profilePaths?.[0] ? (
-                      <div className="muted">{thunderbirdStatus.profilePaths[0]}</div>
-                    ) : null}
                   </div>
                 )}
               </div>
@@ -572,6 +727,24 @@ export function MailApp() {
                 </button>
               </div>
 
+              <div className="metric-grid">
+                <div className="metric-card">
+                  <div className="eyebrow">Needs Reply</div>
+                  <strong>{workbench?.summary.needsReply ?? 0}</strong>
+                  <span className="muted">{workbench?.summary.overdue ?? 0} overdue</span>
+                </div>
+                <div className="metric-card">
+                  <div className="eyebrow">Waiting</div>
+                  <strong>{workbench?.summary.waitingOnThem ?? 0}</strong>
+                  <span className="muted">reply already sent</span>
+                </div>
+                <div className="metric-card">
+                  <div className="eyebrow">Follow Up Today</div>
+                  <strong>{workbench?.summary.followUpToday ?? 0}</strong>
+                  <span className="muted">auto reminders</span>
+                </div>
+              </div>
+
               <div className="account-card">
                 <div className="thread-header">
                   <div>
@@ -590,7 +763,7 @@ export function MailApp() {
                   <div className="empty-state">
                     <Archive size={24} />
                     <div>No imported mailbox connected yet.</div>
-                    <div>Use `.eml` or `.olm` import to backfill history, or connect Microsoft if tenant approval becomes available later.</div>
+                    <div>Use `.eml` or `.olm` import to backfill history, or connect Microsoft when OAuth is available.</div>
                   </div>
                 ) : (
                   accounts.map((account) => (
@@ -643,6 +816,46 @@ export function MailApp() {
                 )}
               </div>
 
+              <div className="account-card">
+                <div className="thread-header">
+                  <div>
+                    <div className="eyebrow">By Client / Account</div>
+                    <h2 className="title" style={{ fontSize: "1.1rem" }}>
+                      Organizations
+                    </h2>
+                  </div>
+                  <div className="status-pill active">
+                    <Building2 size={14} />
+                    {workbench?.byOrganization.length ?? 0} active
+                  </div>
+                </div>
+
+                {(workbench?.byOrganization.length ?? 0) > 0 ? (
+                  <div className="mailbox-list">
+                    {workbench?.byOrganization.map((organization) => (
+                      <div key={organization.id} className="mailbox-row">
+                        <div className="mailbox-name">
+                          <Building2 size={16} />
+                          <strong>{organization.name}</strong>
+                        </div>
+                        <div className="thread-row-meta">
+                          {organization.needsReply > 0 ? (
+                            <span className="status-pill warning">{organization.needsReply} needs reply</span>
+                          ) : null}
+                          {organization.followUps > 0 ? <span className="meta-pill">{organization.followUps} follow-ups</span> : null}
+                        </div>
+                        <div className="muted">{organization.primaryDomain ?? organization.kind.toLowerCase()}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state compact">
+                    <Building2 size={20} />
+                    <div>Organizations will appear here as intelligence is derived from stored mail.</div>
+                  </div>
+                )}
+              </div>
+
               <form className="form" onSubmit={(event) => void handleAddSharedMailbox(event)}>
                 <div className="eyebrow">Shared mailbox</div>
                 <input
@@ -668,7 +881,7 @@ export function MailApp() {
               <form className="form" onSubmit={(event) => void handleArchiveImport(event)}>
                 <div className="eyebrow">Archive Import</div>
                 <div className="copy">
-                  Import `.olm` for Outlook history or `.eml` for targeted recovery. If a mailbox is selected above, the import lands there.
+                  Import `.olm` for history or `.eml` for targeted recovery. New mail is enriched into people, organization, and reply-state records on ingest.
                 </div>
                 {!selectedMailboxId ? (
                   <>
@@ -709,26 +922,58 @@ export function MailApp() {
         <section className="panel thread-list">
           <div className="thread-header">
             <div>
-              <div className="eyebrow">{sourceMode === "thunderbird" ? "Live stream" : "Imported stream"}</div>
+              <div className="eyebrow">{sourceMode === "thunderbird" ? "Live stream" : "Action queue"}</div>
               <h2 className="title" style={{ fontSize: "1.2rem" }}>
-                {sourceMode === "thunderbird"
-                  ? liveHeaderName
-                  : selectedAccount?.mailboxes.find((mailbox) => mailbox.id === selectedMailboxId)?.displayName ??
-                    "Choose a mailbox"}
+                {sourceMode === "thunderbird" ? liveHeaderName : archiveListTitle}
               </h2>
             </div>
             <div className="status-pill active">
-              <FolderSync size={14} />
-              {sourceMode === "thunderbird" ? thunderbirdMessages.length : archiveThreads.length} loaded
+              {sourceMode === "thunderbird" ? <PlugZap size={14} /> : <LayoutGrid size={14} />}
+              {sourceMode === "thunderbird"
+                ? `${thunderbirdMessages.length} loaded`
+                : `${archiveSurface === "followUpToday" ? filteredFollowUps.length : archiveSurface === "needsReply" ? filteredWorkbenchNeedsReply.length : archiveSurface === "waitingOnThem" ? filteredWorkbenchWaiting.length : allArchiveThreads.length} items`}
             </div>
           </div>
+
+          {sourceMode === "archive" ? (
+            <div className="surface-tabs">
+              <button
+                className={`button ${archiveSurface === "needsReply" ? "primary" : "secondary"}`}
+                onClick={() => setArchiveSurface("needsReply")}
+              >
+                <Inbox size={16} />
+                Needs Reply
+              </button>
+              <button
+                className={`button ${archiveSurface === "waitingOnThem" ? "primary" : "secondary"}`}
+                onClick={() => setArchiveSurface("waitingOnThem")}
+              >
+                <SendHorizontal size={16} />
+                Waiting on Client
+              </button>
+              <button
+                className={`button ${archiveSurface === "followUpToday" ? "primary" : "secondary"}`}
+                onClick={() => setArchiveSurface("followUpToday")}
+              >
+                <Clock3 size={16} />
+                Follow Up Today
+              </button>
+              <button
+                className={`button ${archiveSurface === "allThreads" ? "primary" : "secondary"}`}
+                onClick={() => setArchiveSurface("allThreads")}
+              >
+                <LayoutGrid size={16} />
+                All Threads
+              </button>
+            </div>
+          ) : null}
 
           <input
             className="search"
             placeholder={
               sourceMode === "thunderbird"
                 ? "Search Thunderbird subject, sender, or recipient"
-                : "Search subject, preview, or people"
+                : "Search subject, people, company, or follow-up"
             }
             value={search}
             onChange={(event) => setSearch(event.target.value)}
@@ -774,38 +1019,98 @@ export function MailApp() {
                   </div>
                 </div>
               )
-            ) : selectedMailboxId && archiveThreads.length > 0 ? (
-              archiveThreads.map((thread) => (
-                <button
-                  key={thread.id}
-                  className={`thread-button ${thread.id === selectedThreadId ? "selected" : ""}`}
-                  onClick={() => setSelectedThreadId(thread.id)}
-                >
-                  <div className="thread-row">
-                    <div className="thread-row-top">
-                      <h3 className="thread-subject">{thread.subject}</h3>
-                      <ChevronRight size={16} />
+            ) : archiveSurface === "followUpToday" ? (
+              filteredFollowUps.length > 0 ? (
+                filteredFollowUps.map((task) => (
+                  <button
+                    key={task.id}
+                    className={`thread-button ${task.thread.id === selectedThreadId ? "selected" : ""}`}
+                    onClick={() => setSelectedThreadId(task.thread.id)}
+                  >
+                    <div className="thread-row">
+                      <div className="thread-row-top">
+                        <h3 className="thread-subject">{task.title}</h3>
+                        <ChevronRight size={16} />
+                      </div>
+                      <p className="thread-preview">{task.note ?? task.thread.subject}</p>
+                      <div className="thread-row-meta">
+                        <span className="meta-pill">{task.organization?.name ?? task.contact?.displayName ?? "Thread follow-up"}</span>
+                        <span className="status-pill warning">Due {formatShortDate(task.dueAt)}</span>
+                      </div>
                     </div>
-                    <p className="thread-preview">{thread.latestMessage?.bodyPreview ?? "No preview yet."}</p>
-                    <div className="thread-row-meta">
-                      <span className="meta-pill">
-                        {thread.latestMessage?.fromName ?? thread.latestMessage?.fromAddress ?? "Unknown sender"}
-                      </span>
-                      <span className="meta-pill">{formatDate(thread.lastMessageAt)}</span>
-                    </div>
-                    <div className="thread-row-meta">
-                      <span className="mailbox-pill">{thread.mailbox.kind.toLowerCase()}</span>
-                      {thread.unreadCount > 0 ? <span className="status-pill warning">{thread.unreadCount} unread</span> : null}
-                    </div>
-                  </div>
-                </button>
-              ))
+                  </button>
+                ))
+              ) : (
+                <div className="empty-state">
+                  <Clock3 size={24} />
+                  <div>No follow-ups due today.</div>
+                  <div>Auto-created reminders will appear here when you are waiting on someone and the follow-up window arrives.</div>
+                </div>
+              )
             ) : (
-              <div className="empty-state">
-                <Archive size={24} />
-                <div>{selectedMailboxId ? "No imported threads yet." : "Select an imported mailbox to browse threads."}</div>
-                <div>Use archive import to backfill history, or return to Thunderbird Live for your current mailbox view.</div>
-              </div>
+              (() => {
+                const archiveItems =
+                  archiveSurface === "needsReply"
+                    ? filteredWorkbenchNeedsReply
+                    : archiveSurface === "waitingOnThem"
+                      ? filteredWorkbenchWaiting
+                      : allArchiveThreads;
+
+                if (!selectedMailboxId && archiveItems.length === 0) {
+                  return (
+                    <div className="empty-state">
+                      <Archive size={24} />
+                      <div>Select or import a mailbox to build the action queues.</div>
+                      <div>The Phase 2 dashboard runs against stored messages and derived intelligence.</div>
+                    </div>
+                  );
+                }
+
+                if (archiveItems.length === 0) {
+                  return (
+                    <div className="empty-state">
+                      <Inbox size={24} />
+                      <div>No threads match this queue yet.</div>
+                      <div>Try another surface, import more history, or wait for the next sync.</div>
+                    </div>
+                  );
+                }
+
+                return archiveItems.map((thread) => (
+                  <button
+                    key={thread.id}
+                    className={`thread-button ${thread.id === selectedThreadId ? "selected" : ""}`}
+                    onClick={() => setSelectedThreadId(thread.id)}
+                  >
+                    <div className="thread-row">
+                      <div className="thread-row-top">
+                        <h3 className="thread-subject">{thread.subject}</h3>
+                        <ChevronRight size={16} />
+                      </div>
+                      <p className="thread-preview">{thread.latestMessage?.bodyPreview ?? "No preview yet."}</p>
+                      <div className="thread-row-meta">
+                        <span className="meta-pill">
+                          {thread.primaryOrganization?.name ??
+                            thread.latestMessage?.fromName ??
+                            thread.latestMessage?.fromAddress ??
+                            "Unknown sender"}
+                        </span>
+                        <span className="meta-pill">{formatDate(thread.lastMessageAt)}</span>
+                      </div>
+                      <div className="thread-row-meta">
+                        <span className={`status-pill ${replyTone(thread.replyState)}`}>{replyLabel(thread.replyState)}</span>
+                        {thread.latestCategory ? <span className="mailbox-pill">{categoryLabel(thread.latestCategory)}</span> : null}
+                        {thread.replyState?.replyDueAt ? (
+                          <span className="meta-pill">Due {formatShortDate(thread.replyState.replyDueAt)}</span>
+                        ) : null}
+                        {thread.replyState?.suggestedFollowUpAt ? (
+                          <span className="meta-pill">Follow up {formatShortDate(thread.replyState.suggestedFollowUpAt)}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </button>
+                ));
+              })()
             )}
           </div>
         </section>
@@ -859,17 +1164,56 @@ export function MailApp() {
             <>
               <div className="thread-view-header">
                 <div>
-                  <div className="eyebrow">Imported Conversation</div>
+                  <div className="eyebrow">Conversation Intelligence</div>
                   <h2 className="title">{selectedThread.subject}</h2>
                 </div>
-                <div className="status-pill active">
-                  <Archive size={14} />
-                  {selectedThread.mailbox.displayName}
+                <div className={`status-pill ${replyTone(selectedThread.replyState)}`}>
+                  <Inbox size={14} />
+                  {replyLabel(selectedThread.replyState)}
                 </div>
               </div>
 
-              <div className="copy">
-                {selectedThread.participants.map((participant) => participant.name || participant.address).join(", ")}
+              <div className="insight-grid">
+                <div className="insight-card">
+                  <div className="eyebrow">Reply State</div>
+                  <strong>{replyLabel(selectedThread.replyState)}</strong>
+                  <div className="copy">{selectedThread.replyState?.reason ?? "No reply state computed yet."}</div>
+                  {selectedThread.replyState?.replyDueAt ? (
+                    <div className="meta-pill">Reply due {formatDate(selectedThread.replyState.replyDueAt)}</div>
+                  ) : null}
+                  {selectedThread.replyState?.suggestedFollowUpAt ? (
+                    <div className="meta-pill">Follow up {formatDate(selectedThread.replyState.suggestedFollowUpAt)}</div>
+                  ) : null}
+                </div>
+
+                <div className="insight-card">
+                  <div className="eyebrow">People + Company</div>
+                  <strong>{selectedThread.people.length} participants</strong>
+                  <div className="pill-wrap">
+                    {selectedThread.people.map((person) => (
+                      <span key={person.id} className="meta-pill">
+                        {person.displayName ?? person.emailAddress}
+                        {person.organization ? ` · ${person.organization.name}` : ""}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="insight-card">
+                  <div className="eyebrow">Follow-ups</div>
+                  <strong>{selectedThread.followUpTasks.length}</strong>
+                  <div className="pill-wrap">
+                    {selectedThread.followUpTasks.length > 0 ? (
+                      selectedThread.followUpTasks.map((task) => (
+                        <span key={task.id} className="meta-pill">
+                          {task.title} · {formatShortDate(task.dueAt)}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="muted">No pending reminder for this thread.</span>
+                    )}
+                  </div>
+                </div>
               </div>
 
               <div className="message-stack">
@@ -881,7 +1225,10 @@ export function MailApp() {
                     </div>
                     <div className="message-meta">
                       <div className="muted">{message.fromAddress ?? "No sender address"}</div>
-                      <div className="mailbox-pill">{message.importance ?? "normal"}</div>
+                      <div className="thread-row-meta">
+                        {message.category ? <span className="mailbox-pill">{categoryLabel(message.category)}</span> : null}
+                        <span className="meta-pill">{message.importance ?? "normal"}</span>
+                      </div>
                     </div>
                     <p className="message-body">{message.bodyText || message.bodyPreview || "(empty message)"}</p>
                   </article>
@@ -891,8 +1238,8 @@ export function MailApp() {
           ) : (
             <div className="empty-state">
               <Archive size={26} />
-              <div>No imported thread selected.</div>
-              <div>Choose a synced conversation from the middle column to inspect the full message stack.</div>
+              <div>No conversation selected.</div>
+              <div>Choose a queue item from the middle column to inspect the thread, people, and follow-up state.</div>
             </div>
           )}
         </section>

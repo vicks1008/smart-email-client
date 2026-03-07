@@ -56,7 +56,30 @@ export type ThreadSummary = {
     emailAddress: string;
     displayName: string;
     kind: "PRIMARY" | "SHARED";
+    role: "PERSONAL" | "SHARED" | "TEAM";
   };
+  primaryOrganization: {
+    id: string;
+    name: string;
+    kind: "INTERNAL" | "CLIENT" | "VENDOR" | "LEAD" | "UNKNOWN";
+    primaryDomain: string | null;
+  } | null;
+  replyState: {
+    status: "NEEDS_REPLY" | "WAITING_ON_THEM" | "CLOSED_LOOP" | "FOLLOW_UP_LATER";
+    reason: string;
+    confidence: number;
+    needsReply: boolean;
+    waitingOnThem: boolean;
+    replyDueAt: string | null;
+    staleAt: string | null;
+    suggestedFollowUpAt: string | null;
+    isOverdue: boolean;
+  } | null;
+  latestCategory: {
+    label: "CLIENT" | "LEAD" | "VENDOR" | "INTERNAL" | "BILLING" | "SUPPORT" | "NEWSLETTER" | "NOTIFICATION";
+    confidence: number;
+    source: "DOMAIN" | "SIGNATURE" | "THREAD_HISTORY" | "HEURISTIC" | "MANUAL" | "MODEL";
+  } | null;
   latestMessage: {
     id: string;
     fromName: string | null;
@@ -80,7 +103,31 @@ export type ThreadDetail = {
     displayName: string;
     emailAddress: string;
     kind: "PRIMARY" | "SHARED";
+    role: "PERSONAL" | "SHARED" | "TEAM";
   };
+  replyState: ThreadSummary["replyState"];
+  people: Array<{
+    id: string;
+    emailAddress: string;
+    displayName: string | null;
+    isMailbox: boolean;
+    isSharedMailbox: boolean;
+    organization: ThreadSummary["primaryOrganization"];
+    contact: {
+      id: string;
+      displayName: string;
+      roleTitle: string | null;
+      isMailboxOwner: boolean;
+      emailAddresses: string[];
+    } | null;
+  }>;
+  followUpTasks: Array<{
+    id: string;
+    title: string;
+    note: string | null;
+    dueAt: string;
+    status: "PENDING" | "COMPLETED" | "CANCELED";
+  }>;
   messages: Array<{
     id: string;
     subject: string;
@@ -97,6 +144,52 @@ export type ThreadDetail = {
     isRead: boolean;
     hasAttachments: boolean;
     importance: string | null;
+    category: ThreadSummary["latestCategory"];
+  }>;
+};
+
+export type WorkbenchData = {
+  summary: {
+    needsReply: number;
+    waitingOnThem: number;
+    followUpToday: number;
+    overdue: number;
+  };
+  needsReply: ThreadSummary[];
+  waitingOnThem: ThreadSummary[];
+  followUpToday: Array<{
+    id: string;
+    title: string;
+    note: string | null;
+    dueAt: string;
+    mailbox: {
+      id: string;
+      emailAddress: string;
+      displayName: string;
+      role: "PERSONAL" | "SHARED" | "TEAM";
+    };
+    thread: {
+      id: string;
+      subject: string;
+    };
+    organization: {
+      id: string;
+      name: string;
+      kind: "INTERNAL" | "CLIENT" | "VENDOR" | "LEAD" | "UNKNOWN";
+    } | null;
+    contact: {
+      id: string;
+      displayName: string;
+    } | null;
+  }>;
+  byOrganization: Array<{
+    id: string;
+    name: string;
+    kind: "INTERNAL" | "CLIENT" | "VENDOR" | "LEAD" | "UNKNOWN";
+    primaryDomain: string | null;
+    needsReply: number;
+    waitingOnThem: number;
+    followUps: number;
   }>;
 };
 
@@ -209,6 +302,11 @@ export async function fetchThreads(mailboxId?: string) {
 
 export async function fetchThread(threadId: string) {
   return apiFetch<{ thread: ThreadDetail }>(`/v1/threads/${threadId}`);
+}
+
+export async function fetchWorkbench(mailboxId?: string) {
+  const query = mailboxId ? `?mailboxId=${encodeURIComponent(mailboxId)}` : "";
+  return apiFetch<WorkbenchData>(`/v1/workbench${query}`);
 }
 
 export async function fetchThunderbirdStatus() {

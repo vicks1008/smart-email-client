@@ -3,6 +3,7 @@ export type { NormalizedMessage } from "./mail-sync";
 
 export { prisma } from "./db";
 export { getEnv, hasMicrosoftOAuthConfig } from "./env";
+export { applyThreadIntelligence, inferMailboxRole, rebuildIntelligence } from "./intelligence";
 export {
   buildMicrosoftAuthUrl,
   exchangeMicrosoftCode,

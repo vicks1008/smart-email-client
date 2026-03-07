@@ -9,6 +9,7 @@ import {
 
 import { prisma } from "./db";
 import { getEnv, hasMicrosoftOAuthConfig } from "./env";
+import { applyThreadIntelligence, inferMailboxRole } from "./intelligence";
 import {
   getMailboxResourcePath,
   getMicrosoftProfile,
@@ -100,14 +101,16 @@ export async function registerMailbox(accountId: string, input: MailboxSummaryIn
     update: {
       displayName: input.displayName ?? normalizedEmailAddress,
       emailAddress: normalizedEmailAddress,
-      kind: input.kind ?? MailboxKind.PRIMARY
+      kind: input.kind ?? MailboxKind.PRIMARY,
+      role: inferMailboxRole(normalizedEmailAddress, input.kind ?? MailboxKind.PRIMARY)
     },
     create: {
       accountId,
       externalId,
       emailAddress: normalizedEmailAddress,
       displayName: input.displayName ?? normalizedEmailAddress,
-      kind: input.kind ?? MailboxKind.PRIMARY
+      kind: input.kind ?? MailboxKind.PRIMARY,
+      role: inferMailboxRole(normalizedEmailAddress, input.kind ?? MailboxKind.PRIMARY)
     }
   });
 }
@@ -342,6 +345,8 @@ export async function ingestNormalizedMessage(mailbox: Mailbox, message: Normali
         receivedAt > thread.lastMessageAt ? receivedAt : thread.lastMessageAt
     }
   });
+
+  await applyThreadIntelligence(thread.id);
 }
 
 async function refreshUnreadCounts(mailboxId: string) {

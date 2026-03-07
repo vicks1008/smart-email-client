@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum AccountProvider {
@@ -21,6 +20,12 @@ enum AccountStatus {
 enum MailboxKind {
   PRIMARY
   SHARED
+}
+
+enum MailboxRole {
+  PERSONAL
+  SHARED
+  TEAM
 }
 
 enum SyncJobStatus {
@@ -45,6 +50,52 @@ enum ImportJobStatus {
   IN_PROGRESS
   SUCCEEDED
   FAILED
+}
+
+enum OrganizationKind {
+  INTERNAL
+  CLIENT
+  VENDOR
+  LEAD
+  UNKNOWN
+}
+
+enum MessageCategoryLabel {
+  CLIENT
+  LEAD
+  VENDOR
+  INTERNAL
+  BILLING
+  SUPPORT
+  NEWSLETTER
+  NOTIFICATION
+}
+
+enum MessageCategorySource {
+  DOMAIN
+  SIGNATURE
+  THREAD_HISTORY
+  HEURISTIC
+  MANUAL
+  MODEL
+}
+
+enum ReplyStateStatus {
+  NEEDS_REPLY
+  WAITING_ON_THEM
+  CLOSED_LOOP
+  FOLLOW_UP_LATER
+}
+
+enum FollowUpTaskStatus {
+  PENDING
+  COMPLETED
+  CANCELED
+}
+
+enum FollowUpTaskSource {
+  AUTO
+  MANUAL
 }
 
 model OAuthState {
@@ -83,19 +134,28 @@ model Mailbox {
   emailAddress        String
   displayName         String
   kind                MailboxKind
+  role                MailboxRole @default(PERSONAL)
+  ownerOrganizationId String?
+  ownerContactId      String?
   deltaLink           String?     @db.Text
   lastSyncedAt        DateTime?
   lastSyncError       String?     @db.Text
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
   account             Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  ownerOrganization   Organization? @relation("MailboxOrganization", fields: [ownerOrganizationId], references: [id], onDelete: SetNull)
+  ownerContact        Contact?    @relation("MailboxOwnerContact", fields: [ownerContactId], references: [id], onDelete: SetNull)
   threads             Thread[]
   messages            Message[]
+  replyStates         ReplyState[]
+  followUpTasks       FollowUpTask[]
   syncJobs            SyncJob[]
   importJobs          ImportJob[]
 
   @@unique([accountId, externalId])
   @@unique([accountId, emailAddress])
+  @@index([ownerOrganizationId])
+  @@index([ownerContactId])
 }
 
 model Thread {
@@ -110,6 +170,10 @@ model Thread {
   updatedAt              DateTime   @updatedAt
   mailbox                Mailbox    @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
   messages               Message[]
+  participantsExpanded   ThreadParticipant[]
+  messageCategories      MessageCategory[]
+  replyState             ReplyState?
+  followUpTasks          FollowUpTask[]
 
   @@unique([mailboxId, externalConversationId])
   @@index([mailboxId, lastMessageAt(sort: Desc)])
@@ -139,9 +203,151 @@ model Message {
   updatedAt         DateTime  @updatedAt
   mailbox           Mailbox   @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
   thread            Thread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  category          MessageCategory?
 
   @@unique([mailboxId, externalMessageId])
   @@index([threadId, receivedAt(sort: Desc)])
+}
+
+model Organization {
+  id                String            @id @default(cuid())
+  name              String
+  normalizedName    String            @unique
+  primaryDomain     String?
+  kind              OrganizationKind  @default(UNKNOWN)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  contacts          Contact[]
+  mailboxes         Mailbox[]         @relation("MailboxOrganization")
+  threadParticipants ThreadParticipant[]
+  messageCategories MessageCategory[]
+  followUpTasks     FollowUpTask[]
+
+  @@index([primaryDomain])
+  @@index([kind, name])
+}
+
+model Contact {
+  id                 String                @id @default(cuid())
+  organizationId     String?
+  displayName        String
+  normalizedName     String
+  roleTitle          String?
+  isMailboxOwner     Boolean               @default(false)
+  lastSeenAt         DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  organization       Organization?         @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  emailAddresses     ContactEmailAddress[]
+  threadParticipants ThreadParticipant[]
+  ownedMailboxes     Mailbox[]             @relation("MailboxOwnerContact")
+  followUpTasks      FollowUpTask[]
+
+  @@index([organizationId, normalizedName])
+  @@index([normalizedName])
+}
+
+model ContactEmailAddress {
+  id           String   @id @default(cuid())
+  contactId    String
+  emailAddress String   @unique
+  domain       String
+  isPrimary    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  contact      Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+  @@index([domain])
+}
+
+model ThreadParticipant {
+  id             String        @id @default(cuid())
+  threadId       String
+  contactId      String?
+  organizationId String?
+  emailAddress   String
+  displayName    String?
+  isMailbox      Boolean       @default(false)
+  isSharedMailbox Boolean      @default(false)
+  firstSeenAt    DateTime
+  lastSeenAt     DateTime
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  thread         Thread        @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  contact        Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@unique([threadId, emailAddress])
+  @@index([contactId])
+  @@index([organizationId])
+}
+
+model MessageCategory {
+  id             String                @id @default(cuid())
+  messageId      String                @unique
+  threadId       String
+  organizationId String?
+  label          MessageCategoryLabel
+  confidence     Float
+  source         MessageCategorySource
+  isUserOverride Boolean               @default(false)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  message        Message               @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  thread         Thread                @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  organization   Organization?         @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([threadId, label])
+  @@index([organizationId, label])
+}
+
+model ReplyState {
+  id                  String           @id @default(cuid())
+  threadId            String           @unique
+  mailboxId           String
+  status              ReplyStateStatus
+  reason              String
+  confidence          Float
+  needsReply          Boolean          @default(false)
+  waitingOnThem       Boolean          @default(false)
+  lastInboundAt       DateTime?
+  lastOutboundAt      DateTime?
+  replyDueAt          DateTime?
+  staleAt             DateTime?
+  suggestedFollowUpAt DateTime?
+  isOverdue           Boolean          @default(false)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  thread              Thread           @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  mailbox             Mailbox          @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@index([mailboxId, status, replyDueAt])
+  @@index([mailboxId, isOverdue, suggestedFollowUpAt])
+}
+
+model FollowUpTask {
+  id             String             @id @default(cuid())
+  threadId       String
+  mailboxId      String
+  organizationId String?
+  contactId      String?
+  source         FollowUpTaskSource
+  status         FollowUpTaskStatus @default(PENDING)
+  title          String
+  note           String?
+  dueAt          DateTime
+  completedAt    DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  thread         Thread             @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  mailbox        Mailbox            @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  organization   Organization?      @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  contact        Contact?           @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([mailboxId, status, dueAt])
+  @@index([threadId, status])
+  @@index([organizationId, status, dueAt])
 }
 
 model SyncJob {

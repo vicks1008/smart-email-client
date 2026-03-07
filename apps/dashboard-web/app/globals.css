@@ -11,6 +11,7 @@
   --accent-soft: rgba(239, 108, 61, 0.12);
   --success: #177245;
   --warning: #9c5c12;
+  --danger: #b23b2a;
   --shadow: 0 24px 80px rgba(35, 28, 21, 0.12);
   --font-sans: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
 }
@@ -124,6 +125,12 @@ a {
   flex-wrap: wrap;
 }
 
+.surface-tabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -203,12 +210,47 @@ a {
   background: rgba(156, 92, 18, 0.12);
 }
 
+.status-pill.danger {
+  color: var(--danger);
+  background: rgba(178, 59, 42, 0.12);
+}
+
 .mailbox-list,
 .thread-items,
 .message-stack {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.metric-grid,
+.insight-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.metric-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.insight-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-card,
+.insight-card {
+  border-radius: 22px;
+  padding: 16px;
+  border: 1px solid rgba(29, 36, 51, 0.08);
+  background: rgba(255, 255, 255, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metric-card strong,
+.insight-card strong {
+  font-size: 1.4rem;
 }
 
 .mailbox-button,
@@ -292,6 +334,12 @@ a {
   gap: 18px;
 }
 
+.pill-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .message-stack {
   overflow: auto;
   padding-right: 6px;
@@ -350,6 +398,11 @@ input[type="file"].input {
   color: var(--muted);
 }
 
+.empty-state.compact {
+  min-height: auto;
+  padding: 12px;
+}
+
 @keyframes float {
   0%,
   100% {
@@ -363,6 +416,11 @@ input[type="file"].input {
 
 @media (max-width: 1180px) {
   .mail-frame {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-grid,
+  .insight-grid {
     grid-template-columns: 1fr;
   }
 }
