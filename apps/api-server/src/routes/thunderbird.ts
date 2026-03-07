@@ -9,8 +9,31 @@ import {
   searchThunderbirdMessages,
   thunderbirdSetupProbe
 } from "../thunderbird";
+import { syncThunderbirdAccountIntoWorkbench } from "../thunderbird-sync";
 
 export async function registerThunderbirdRoutes(app: FastifyInstance) {
+  app.post("/v1/thunderbird/sync", async (request, reply) => {
+    const body = z
+      .object({
+        thunderbirdAccountId: z.string().min(1),
+        mailboxEmail: z.string().email().optional(),
+        mailboxDisplayName: z.string().min(1).max(120).optional(),
+        daysBack: z.coerce.number().int().min(1).max(365).optional(),
+        maxMessagesPerFolder: z.coerce.number().int().min(1).max(500).optional()
+      })
+      .parse(request.body);
+
+    try {
+      return reply.status(201).send({
+        sync: await syncThunderbirdAccountIntoWorkbench(body)
+      });
+    } catch (error) {
+      return reply.status(503).send({
+        error: error instanceof Error ? error.message : "Thunderbird sync failed."
+      });
+    }
+  });
+
   app.get("/v1/thunderbird/status", async () => {
     return thunderbirdSetupProbe();
   });

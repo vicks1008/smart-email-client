@@ -269,6 +269,28 @@ export type ThunderbirdMessageDetail = ThunderbirdMessageSummary & {
   }>;
 };
 
+export type ThunderbirdSyncResult = {
+  sync: {
+    account: {
+      id: string;
+      email: string;
+      displayName: string | null;
+    };
+    mailbox: {
+      id: string;
+      emailAddress: string;
+      displayName: string;
+      kind: "PRIMARY" | "SHARED";
+    };
+    importedMessages: number;
+    folders: Array<{
+      path: string;
+      name: string;
+      type: string;
+    }>;
+  };
+};
+
 async function apiFetch<T>(path: string, init?: RequestInit) {
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
@@ -346,6 +368,19 @@ export async function fetchThunderbirdMessage(messageId: string, folderPath: str
   return apiFetch<{ message: ThunderbirdMessageDetail }>(
     `/v1/thunderbird/messages/detail?${params.toString()}`
   );
+}
+
+export async function syncThunderbirdMailbox(payload: {
+  thunderbirdAccountId: string;
+  mailboxEmail?: string;
+  mailboxDisplayName?: string;
+  daysBack?: number;
+  maxMessagesPerFolder?: number;
+}) {
+  return apiFetch<ThunderbirdSyncResult>("/v1/thunderbird/sync", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function searchThunderbirdMessages(query: string, folderPath?: string) {

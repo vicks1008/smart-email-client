@@ -37,6 +37,7 @@ import {
   getMicrosoftConnectUrl,
   queueSync,
   searchThunderbirdMessages,
+  syncThunderbirdMailbox,
   uploadArchive,
   type AccountSummary,
   type ImportJobSummary,
@@ -147,10 +148,13 @@ export function MailApp() {
   const [importMailboxEmail, setImportMailboxEmail] = useState("");
   const [importMailboxName, setImportMailboxName] = useState("");
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [thunderbirdImportMailboxEmail, setThunderbirdImportMailboxEmail] = useState("");
+  const [thunderbirdImportMailboxName, setThunderbirdImportMailboxName] = useState("");
   const [loading, setLoading] = useState(true);
   const [isSyncPending, startSyncTransition] = useTransition();
   const [isMailboxPending, startMailboxTransition] = useTransition();
   const [isImportPending, startImportTransition] = useTransition();
+  const [isThunderbirdImportPending, startThunderbirdImportTransition] = useTransition();
 
   const deferredSearch = useDeferredValue(search);
 
@@ -446,6 +450,41 @@ export function MailApp() {
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Archive import failed.");
+      }
+    });
+  }
+
+  async function handleThunderbirdImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedThunderbirdAccountId) {
+      toast.error("Choose a Thunderbird account first.");
+      return;
+    }
+
+    startThunderbirdImportTransition(async () => {
+      try {
+        const result = await syncThunderbirdMailbox({
+          thunderbirdAccountId: selectedThunderbirdAccountId,
+          mailboxEmail: thunderbirdImportMailboxEmail || undefined,
+          mailboxDisplayName: thunderbirdImportMailboxName || undefined,
+          daysBack: 45,
+          maxMessagesPerFolder: 250
+        });
+
+        toast.success(
+          `Synced ${result.sync.importedMessages} Thunderbird message${result.sync.importedMessages === 1 ? "" : "s"} into ${result.sync.mailbox.emailAddress}.`
+        );
+        setThunderbirdImportMailboxEmail("");
+        setThunderbirdImportMailboxName("");
+        await refreshArchiveAccounts();
+        await refreshWorkbench(result.sync.mailbox.id);
+        await refreshThreads(result.sync.mailbox.id);
+        setSelectedAccountId(result.sync.account.id);
+        setSelectedMailboxId(result.sync.mailbox.id);
+        setSourceMode("archive");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Thunderbird sync failed.");
       }
     });
   }
@@ -971,6 +1010,44 @@ export function MailApp() {
                         <button className="button secondary" disabled={isImportPending} type="submit">
                           <Upload size={16} />
                           Import
+                        </button>
+                      </form>
+                    </details>
+
+                    <details className="collapsible">
+                      <summary>
+                        <PlugZap size={16} />
+                        Sync from Thunderbird
+                      </summary>
+                      <form className="form" onSubmit={(event) => void handleThunderbirdImport(event)}>
+                        <div className="muted">
+                          Syncs the selected Thunderbird account's Inbox and Sent folders into the workbench. Leave the mailbox fields blank for the account's default identity, or set `hey@razzinteractive.com` explicitly for the shared inbox.
+                        </div>
+                        <div className="meta-pill">
+                          {selectedThunderbirdAccount
+                            ? `Selected Thunderbird account: ${selectedThunderbirdAccount.name}`
+                            : "Select a Thunderbird account from Live first."}
+                        </div>
+                        <input
+                          className="input"
+                          placeholder="Optional mailbox email override"
+                          type="email"
+                          value={thunderbirdImportMailboxEmail}
+                          onChange={(event) => setThunderbirdImportMailboxEmail(event.target.value)}
+                        />
+                        <input
+                          className="input"
+                          placeholder="Optional mailbox display name"
+                          value={thunderbirdImportMailboxName}
+                          onChange={(event) => setThunderbirdImportMailboxName(event.target.value)}
+                        />
+                        <button
+                          className="button secondary"
+                          disabled={isThunderbirdImportPending || !selectedThunderbirdAccountId}
+                          type="submit"
+                        >
+                          <PlugZap size={16} />
+                          Sync selected account
                         </button>
                       </form>
                     </details>
