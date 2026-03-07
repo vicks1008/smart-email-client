@@ -5,6 +5,25 @@ export { prisma } from "./db";
 export { getEnv, hasMicrosoftOAuthConfig } from "./env";
 export { applyThreadIntelligence, inferMailboxRole, rebuildIntelligence } from "./intelligence";
 export {
+  getThunderbirdMessageDetail,
+  getThunderbirdRecentMessages,
+  getThunderbirdStatus,
+  listThunderbirdAccounts,
+  listThunderbirdDiscoveredMailboxes,
+  listThunderbirdFolders,
+  listThunderbirdSyncSources,
+  searchThunderbirdMessages,
+  syncAllThunderbirdDiscoveredMailboxes,
+  syncDueThunderbirdSources,
+  syncThunderbirdAccountIntoWorkbench,
+  thunderbirdSetupProbe,
+  type ThunderbirdAccount,
+  type ThunderbirdFolder,
+  type ThunderbirdMessageDetail,
+  type ThunderbirdMessageSummary,
+  type ThunderbirdStatus
+} from "./thunderbird";
+export {
   buildMicrosoftAuthUrl,
   exchangeMicrosoftCode,
   getMailboxResourcePath,

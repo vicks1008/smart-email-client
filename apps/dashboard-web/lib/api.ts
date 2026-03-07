@@ -291,6 +291,40 @@ export type ThunderbirdSyncResult = {
   };
 };
 
+export type ThunderbirdDiscoveredMailbox = {
+  thunderbirdAccountId: string;
+  thunderbirdAccountName: string;
+  thunderbirdIdentityId: string | null;
+  thunderbirdIdentityEmail: string | null;
+  thunderbirdIdentityName: string | null;
+  mailboxEmail: string;
+  mailboxDisplayName: string;
+  kind: "PRIMARY" | "SHARED";
+  isTeamMailbox: boolean;
+};
+
+export type ThunderbirdSyncSource = {
+  id: string;
+  mailboxId: string;
+  thunderbirdAccountId: string;
+  thunderbirdAccountName: string;
+  thunderbirdIdentityId: string | null;
+  thunderbirdIdentityEmail: string | null;
+  thunderbirdIdentityName: string | null;
+  daysBack: number;
+  maxMessagesPerFolder: number;
+  enabled: boolean;
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+  mailbox: {
+    id: string;
+    emailAddress: string;
+    displayName: string;
+    kind: "PRIMARY" | "SHARED";
+    role: "PERSONAL" | "SHARED" | "TEAM";
+  };
+};
+
 async function apiFetch<T>(path: string, init?: RequestInit) {
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
@@ -333,6 +367,14 @@ export async function fetchWorkbench(mailboxId?: string) {
 
 export async function fetchThunderbirdStatus() {
   return apiFetch<ThunderbirdStatus>("/v1/thunderbird/status");
+}
+
+export async function fetchThunderbirdDiscoveredMailboxes() {
+  return apiFetch<{ mailboxes: ThunderbirdDiscoveredMailbox[] }>("/v1/thunderbird/discovered-mailboxes");
+}
+
+export async function fetchThunderbirdSyncSources() {
+  return apiFetch<{ sources: ThunderbirdSyncSource[] }>("/v1/thunderbird/sources");
 }
 
 export async function fetchThunderbirdAccounts() {
@@ -380,6 +422,16 @@ export async function syncThunderbirdMailbox(payload: {
   return apiFetch<ThunderbirdSyncResult>("/v1/thunderbird/sync", {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function syncAllThunderbirdMailboxes(payload?: {
+  daysBack?: number;
+  maxMessagesPerFolder?: number;
+}) {
+  return apiFetch<{ syncs: ThunderbirdSyncResult["sync"][] }>("/v1/thunderbird/sync-all", {
+    method: "POST",
+    body: JSON.stringify(payload ?? {})
   });
 }
 

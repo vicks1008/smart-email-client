@@ -151,11 +151,33 @@ model Mailbox {
   followUpTasks       FollowUpTask[]
   syncJobs            SyncJob[]
   importJobs          ImportJob[]
+  thunderbirdSyncSource ThunderbirdSyncSource?
 
   @@unique([accountId, externalId])
   @@unique([accountId, emailAddress])
   @@index([ownerOrganizationId])
   @@index([ownerContactId])
+}
+
+model ThunderbirdSyncSource {
+  id                    String   @id @default(cuid())
+  mailboxId             String   @unique
+  thunderbirdAccountId  String
+  thunderbirdAccountName String
+  thunderbirdIdentityId String?
+  thunderbirdIdentityEmail String?
+  thunderbirdIdentityName String?
+  daysBack              Int      @default(45)
+  maxMessagesPerFolder  Int      @default(250)
+  enabled               Boolean  @default(true)
+  lastSyncedAt          DateTime?
+  lastSyncError         String?  @db.Text
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  mailbox               Mailbox  @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@index([enabled, lastSyncedAt])
+  @@index([thunderbirdAccountId])
 }
 
 model Thread {

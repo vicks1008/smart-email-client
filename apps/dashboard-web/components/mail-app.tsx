@@ -28,15 +28,18 @@ import {
   fetchImports,
   fetchThread,
   fetchThreads,
+  fetchThunderbirdDiscoveredMailboxes,
   fetchThunderbirdAccounts,
   fetchThunderbirdFolders,
   fetchThunderbirdMessage,
   fetchThunderbirdRecentMessages,
+  fetchThunderbirdSyncSources,
   fetchThunderbirdStatus,
   fetchWorkbench,
   getMicrosoftConnectUrl,
   queueSync,
   searchThunderbirdMessages,
+  syncAllThunderbirdMailboxes,
   syncThunderbirdMailbox,
   uploadArchive,
   type AccountSummary,
@@ -44,9 +47,11 @@ import {
   type ThreadDetail,
   type ThreadSummary,
   type ThunderbirdAccount,
+  type ThunderbirdDiscoveredMailbox,
   type ThunderbirdFolder,
   type ThunderbirdMessageDetail,
   type ThunderbirdMessageSummary,
+  type ThunderbirdSyncSource,
   type ThunderbirdStatus,
   type WorkbenchData
 } from "../lib/api";
@@ -133,6 +138,9 @@ export function MailApp() {
   const [thunderbirdMessages, setThunderbirdMessages] = useState<ThunderbirdMessageSummary[]>([]);
   const [selectedThunderbirdMessageId, setSelectedThunderbirdMessageId] = useState<string | null>(null);
   const [selectedThunderbirdMessage, setSelectedThunderbirdMessage] = useState<ThunderbirdMessageDetail | null>(null);
+  const [thunderbirdDiscoveredMailboxes, setThunderbirdDiscoveredMailboxes] = useState<ThunderbirdDiscoveredMailbox[]>([]);
+  const [thunderbirdSyncSources, setThunderbirdSyncSources] = useState<ThunderbirdSyncSource[]>([]);
+  const [selectedThunderbirdCandidateEmail, setSelectedThunderbirdCandidateEmail] = useState<string>("");
 
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
@@ -155,6 +163,7 @@ export function MailApp() {
   const [isMailboxPending, startMailboxTransition] = useTransition();
   const [isImportPending, startImportTransition] = useTransition();
   const [isThunderbirdImportPending, startThunderbirdImportTransition] = useTransition();
+  const [isThunderbirdBulkImportPending, startThunderbirdBulkImportTransition] = useTransition();
 
   const deferredSearch = useDeferredValue(search);
 
@@ -191,6 +200,7 @@ export function MailApp() {
 
   useEffect(() => {
     void refreshThunderbirdStatus();
+    void refreshThunderbirdDiscovery();
     void refreshArchiveAccounts();
   }, []);
 
@@ -248,6 +258,7 @@ export function MailApp() {
       if (status.available) {
         const data = await fetchThunderbirdAccounts();
         setThunderbirdAccounts(data.accounts);
+        await refreshThunderbirdDiscovery();
 
         startTransition(() => {
           const nextAccount = data.accounts[0] ?? null;
@@ -261,6 +272,21 @@ export function MailApp() {
         bridgeUrl: "http://127.0.0.1:8765",
         error: error instanceof Error ? error.message : "Thunderbird status check failed."
       });
+    }
+  }
+
+  async function refreshThunderbirdDiscovery() {
+    try {
+      const [discovered, sources] = await Promise.all([
+        fetchThunderbirdDiscoveredMailboxes(),
+        fetchThunderbirdSyncSources()
+      ]);
+      setThunderbirdDiscoveredMailboxes(discovered.mailboxes);
+      setThunderbirdSyncSources(sources.sources);
+      setSelectedThunderbirdCandidateEmail((current) => current || discovered.mailboxes[0]?.mailboxEmail || "");
+    } catch {
+      setThunderbirdDiscoveredMailboxes([]);
+      setThunderbirdSyncSources([]);
     }
   }
 
@@ -464,10 +490,13 @@ export function MailApp() {
 
     startThunderbirdImportTransition(async () => {
       try {
+        const selectedCandidate =
+          thunderbirdDiscoveredMailboxes.find((candidate) => candidate.mailboxEmail === selectedThunderbirdCandidateEmail) ??
+          null;
         const result = await syncThunderbirdMailbox({
-          thunderbirdAccountId: selectedThunderbirdAccountId,
-          mailboxEmail: thunderbirdImportMailboxEmail || undefined,
-          mailboxDisplayName: thunderbirdImportMailboxName || undefined,
+          thunderbirdAccountId: selectedCandidate?.thunderbirdAccountId ?? selectedThunderbirdAccountId,
+          mailboxEmail: thunderbirdImportMailboxEmail || selectedCandidate?.mailboxEmail || undefined,
+          mailboxDisplayName: thunderbirdImportMailboxName || selectedCandidate?.mailboxDisplayName || undefined,
           daysBack: 45,
           maxMessagesPerFolder: 250
         });
@@ -477,6 +506,7 @@ export function MailApp() {
         );
         setThunderbirdImportMailboxEmail("");
         setThunderbirdImportMailboxName("");
+        await refreshThunderbirdDiscovery();
         await refreshArchiveAccounts();
         await refreshWorkbench(result.sync.mailbox.id);
         await refreshThreads(result.sync.mailbox.id);
@@ -485,6 +515,23 @@ export function MailApp() {
         setSourceMode("archive");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Thunderbird sync failed.");
+      }
+    });
+  }
+
+  async function handleThunderbirdBulkImport() {
+    startThunderbirdBulkImportTransition(async () => {
+      try {
+        const result = await syncAllThunderbirdMailboxes({
+          daysBack: 45,
+          maxMessagesPerFolder: 250
+        });
+        toast.success(`Synced ${result.syncs.length} discovered Thunderbird mailbox${result.syncs.length === 1 ? "" : "es"} into the workbench.`);
+        await refreshThunderbirdDiscovery();
+        await refreshArchiveAccounts();
+        await refreshWorkbench();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Thunderbird bulk sync failed.");
       }
     });
   }
@@ -1021,12 +1068,37 @@ export function MailApp() {
                       </summary>
                       <form className="form" onSubmit={(event) => void handleThunderbirdImport(event)}>
                         <div className="muted">
-                          Syncs the selected Thunderbird account's Inbox and Sent folders into the workbench. Leave the mailbox fields blank for the account's default identity, or set `hey@razzinteractive.com` explicitly for the shared inbox.
+                          Syncs Inbox and Sent from a discovered Thunderbird mailbox into the workbench. Choose a discovered mailbox below, or override manually for edge cases like a shared inbox that Thunderbird does not expose as a separate identity.
                         </div>
+                        {thunderbirdDiscoveredMailboxes.length > 0 ? (
+                          <select
+                            className="input"
+                            value={selectedThunderbirdCandidateEmail}
+                            onChange={(event) => {
+                              const nextEmail = event.target.value;
+                              setSelectedThunderbirdCandidateEmail(nextEmail);
+                              const candidate =
+                                thunderbirdDiscoveredMailboxes.find((entry) => entry.mailboxEmail === nextEmail) ?? null;
+                              setThunderbirdImportMailboxEmail(candidate?.isTeamMailbox ? candidate.mailboxEmail : "");
+                              setThunderbirdImportMailboxName("");
+                              setSelectedThunderbirdAccountId(candidate?.thunderbirdAccountId ?? null);
+                            }}
+                          >
+                            {thunderbirdDiscoveredMailboxes.map((candidate) => (
+                              <option key={`${candidate.thunderbirdAccountId}:${candidate.mailboxEmail}`} value={candidate.mailboxEmail}>
+                                {candidate.mailboxDisplayName} · {candidate.mailboxEmail}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="meta-pill">No discovered Thunderbird mailboxes yet. Open Thunderbird and refresh Live first.</div>
+                        )}
                         <div className="meta-pill">
-                          {selectedThunderbirdAccount
-                            ? `Selected Thunderbird account: ${selectedThunderbirdAccount.name}`
-                            : "Select a Thunderbird account from Live first."}
+                          {selectedThunderbirdCandidateEmail
+                            ? `Target mailbox: ${selectedThunderbirdCandidateEmail}`
+                            : selectedThunderbirdAccount
+                              ? `Selected Thunderbird account: ${selectedThunderbirdAccount.name}`
+                              : "Select a Thunderbird mailbox first."}
                         </div>
                         <input
                           className="input"
@@ -1043,13 +1115,53 @@ export function MailApp() {
                         />
                         <button
                           className="button secondary"
-                          disabled={isThunderbirdImportPending || !selectedThunderbirdAccountId}
+                          disabled={
+                            isThunderbirdImportPending ||
+                            (!selectedThunderbirdAccountId && thunderbirdDiscoveredMailboxes.length === 0)
+                          }
                           type="submit"
                         >
                           <PlugZap size={16} />
-                          Sync selected account
+                          Sync selected mailbox
+                        </button>
+                        <button
+                          className="button secondary"
+                          disabled={isThunderbirdBulkImportPending || thunderbirdDiscoveredMailboxes.length === 0}
+                          onClick={() => void handleThunderbirdBulkImport()}
+                          type="button"
+                        >
+                          <Users size={16} />
+                          Sync all discovered
                         </button>
                       </form>
+                    </details>
+
+                    <details className="collapsible">
+                      <summary>
+                        <FolderSync size={16} />
+                        Connected Thunderbird sources
+                      </summary>
+                      {thunderbirdSyncSources.length > 0 ? (
+                        <div className="activity-list" style={{ marginTop: "12px" }}>
+                          {thunderbirdSyncSources.map((source) => (
+                            <div key={source.id} className="activity-row">
+                              <div>
+                                <strong>{source.mailbox.displayName}</strong>
+                                <div className="muted">
+                                  {source.mailbox.emailAddress} · {source.thunderbirdAccountName}
+                                </div>
+                              </div>
+                              <span className="meta-pill">
+                                {source.lastSyncedAt ? `Synced ${formatShortDate(source.lastSyncedAt)}` : "Pending"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="empty-inline" style={{ marginTop: "12px" }}>
+                          No Thunderbird workbench sources connected yet.
+                        </div>
+                      )}
                     </details>
                   </div>
                 </>

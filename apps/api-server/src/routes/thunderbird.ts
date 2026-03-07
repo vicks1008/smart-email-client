@@ -1,17 +1,43 @@
-import type { FastifyInstance } from "fastify";
-import { z } from "zod";
-
 import {
   getThunderbirdMessageDetail,
   getThunderbirdRecentMessages,
+  listThunderbirdDiscoveredMailboxes,
   listThunderbirdAccounts,
   listThunderbirdFolders,
+  listThunderbirdSyncSources,
   searchThunderbirdMessages,
+  syncAllThunderbirdDiscoveredMailboxes,
+  syncThunderbirdAccountIntoWorkbench,
   thunderbirdSetupProbe
-} from "../thunderbird";
-import { syncThunderbirdAccountIntoWorkbench } from "../thunderbird-sync";
+} from "@smart-email/core";
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 
 export async function registerThunderbirdRoutes(app: FastifyInstance) {
+  app.get("/v1/thunderbird/discovered-mailboxes", async (request, reply) => {
+    try {
+      return {
+        mailboxes: await listThunderbirdDiscoveredMailboxes()
+      };
+    } catch (error) {
+      return reply.status(503).send({
+        error: error instanceof Error ? error.message : "Thunderbird mailbox discovery failed."
+      });
+    }
+  });
+
+  app.get("/v1/thunderbird/sources", async (request, reply) => {
+    try {
+      return {
+        sources: await listThunderbirdSyncSources()
+      };
+    } catch (error) {
+      return reply.status(503).send({
+        error: error instanceof Error ? error.message : "Thunderbird sources are not available."
+      });
+    }
+  });
+
   app.post("/v1/thunderbird/sync", async (request, reply) => {
     const body = z
       .object({
@@ -30,6 +56,25 @@ export async function registerThunderbirdRoutes(app: FastifyInstance) {
     } catch (error) {
       return reply.status(503).send({
         error: error instanceof Error ? error.message : "Thunderbird sync failed."
+      });
+    }
+  });
+
+  app.post("/v1/thunderbird/sync-all", async (request, reply) => {
+    const body = z
+      .object({
+        daysBack: z.coerce.number().int().min(1).max(365).optional(),
+        maxMessagesPerFolder: z.coerce.number().int().min(1).max(500).optional()
+      })
+      .parse(request.body ?? {});
+
+    try {
+      return reply.status(201).send({
+        syncs: await syncAllThunderbirdDiscoveredMailboxes(body)
+      });
+    } catch (error) {
+      return reply.status(503).send({
+        error: error instanceof Error ? error.message : "Thunderbird bulk sync failed."
       });
     }
   });
