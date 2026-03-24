@@ -2,7 +2,6 @@ import {
   FollowUpTaskStatus,
   MessageCategoryLabel,
   OrganizationKind,
-  getOrganizationActivityAnalytics,
   prisma
 } from "@smart-email/core";
 import type { FastifyInstance } from "fastify";
@@ -432,9 +431,9 @@ async function getOrganizationActivity(mailboxId?: string, months = 4, limit = 2
           organizationId: string;
           name: string;
           kind: string;
-          inferredKind: string;
+          inferredKind: OrganizationKind;
           primaryDomain: string | null;
-          dominantCategory: null;
+          dominantCategory: MessageCategoryLabel | null;
           threadCount: number;
           messageCount: number;
           inboundMessageCount: number;
@@ -552,11 +551,7 @@ export async function registerThreadRoutes(app: FastifyInstance) {
       })
       .parse(request.query);
 
-    return getOrganizationActivityAnalytics({
-      mailboxId: query.mailboxId,
-      months: query.months ?? 4,
-      limit: query.limit ?? 25
-    });
+    return getOrganizationActivity(query.mailboxId, query.months ?? 4, query.limit ?? 25);
   });
 
   app.get("/v1/threads/:threadId", async (request, reply) => {
