@@ -44,6 +44,7 @@ import {
   fetchThunderbirdRecentMessages,
   fetchThunderbirdSyncSources,
   fetchThunderbirdStatus,
+  fetchOrganizationActivity,
   fetchWorkbench,
   getMicrosoftConnectUrl,
   queueSync,
@@ -62,10 +63,12 @@ import {
   type ThunderbirdMessageSummary,
   type ThunderbirdSyncSource,
   type ThunderbirdStatus,
+  type OrganizationActivityItem,
+  type OrganizationActivityReport,
   type WorkbenchData
 } from "../lib/api";
 
-type WorkspaceView = "inbox" | "accounts" | "followups" | "live";
+type WorkspaceView = "inbox" | "accounts" | "followups" | "analytics" | "live";
 type InboxQueue = "needsReply" | "waitingOnThem" | "allThreads";
 
 type DraftTemplate = {
@@ -96,6 +99,25 @@ function formatShortDate(value: string | null | undefined) {
     month: "short",
     day: "numeric"
   }).format(new Date(value));
+}
+
+function formatCount(value: number) {
+  return new Intl.NumberFormat(undefined).format(value);
+}
+
+function activityTone(kind: OrganizationActivityItem["inferredKind"]) {
+  switch (kind) {
+    case "CLIENT":
+      return "active";
+    case "LEAD":
+      return "warning";
+    default:
+      return "neutral";
+  }
+}
+
+function dominantCategoryLabel(category: OrganizationActivityItem["dominantCategory"]) {
+  return category?.toLowerCase().replace(/_/g, " ") ?? "uncategorized";
 }
 
 function statusClass(status: AccountSummary["status"]) {
@@ -210,6 +232,7 @@ export function MailApp() {
   const [inboxQueue, setInboxQueue] = useState<InboxQueue>("needsReply");
   const [search, setSearch] = useState("");
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  const [selectedAnalyticsMonths, setSelectedAnalyticsMonths] = useState<1 | 4 | 6>(4);
   const [draftText, setDraftText] = useState("");
 
   const [thunderbirdStatus, setThunderbirdStatus] = useState<ThunderbirdStatus | null>(null);
@@ -230,6 +253,8 @@ export function MailApp() {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [imports, setImports] = useState<ImportJobSummary[]>([]);
   const [workbench, setWorkbench] = useState<WorkbenchData | null>(null);
+  const [organizationActivity, setOrganizationActivity] = useState<OrganizationActivityReport | null>(null);
+  const [selectedActivityOrganizationId, setSelectedActivityOrganizationId] = useState<string | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedThread, setSelectedThread] = useState<ThreadDetail | null>(null);
 
@@ -324,6 +349,14 @@ export function MailApp() {
     void refreshWorkbench(selectedMailboxId);
     void refreshImports(selectedMailboxId, selectedAccountId ?? undefined);
   }, [selectedMailboxId, selectedAccountId]);
+
+  useEffect(() => {
+    if (workspaceView !== "analytics") {
+      return;
+    }
+
+    void refreshOrganizationActivity(selectedAnalyticsMonths);
+  }, [workspaceView, selectedAnalyticsMonths]);
 
   useEffect(() => {
     if (!selectedThreadId) {
@@ -462,6 +495,19 @@ export function MailApp() {
       setWorkbench(data);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load workbench.");
+    }
+  }
+
+  async function refreshOrganizationActivity(months: number, mailboxId?: string) {
+    try {
+      const data = await fetchOrganizationActivity(months, 25, mailboxId);
+      setOrganizationActivity(data);
+      setSelectedActivityOrganizationId((current) => {
+        const retained = data.organizations.find((organization) => organization.organizationId === current)?.organizationId;
+        return retained ?? data.organizations[0]?.organizationId ?? null;
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load organization activity.");
     }
   }
 
@@ -687,12 +733,40 @@ export function MailApp() {
     );
   }, [normalizedQuery, workbench]);
 
+  const filteredActivityOrganizations = useMemo(() => {
+    const items = organizationActivity?.organizations ?? [];
+    if (!normalizedQuery) {
+      return items;
+    }
+
+    return items.filter((organization) =>
+      [
+        organization.name,
+        organization.primaryDomain ?? "",
+        organization.kind,
+        organization.inferredKind,
+        organization.dominantCategory ?? ""
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery)
+    );
+  }, [normalizedQuery, organizationActivity]);
+
   const inboxThreads =
     inboxQueue === "needsReply" ? filteredNeedsReply : inboxQueue === "waitingOnThem" ? filteredWaiting : allArchiveThreads;
 
   const selectedOrganization = useMemo(
     () => filteredOrganizations.find((organization) => organization.id === selectedOrganizationId) ?? filteredOrganizations[0] ?? null,
     [filteredOrganizations, selectedOrganizationId]
+  );
+
+  const selectedActivityOrganization = useMemo(
+    () =>
+      filteredActivityOrganizations.find((organization) => organization.organizationId === selectedActivityOrganizationId) ??
+      filteredActivityOrganizations[0] ??
+      null,
+    [filteredActivityOrganizations, selectedActivityOrganizationId]
   );
 
   const organizationThreads = useMemo(() => {
@@ -719,8 +793,18 @@ export function MailApp() {
       return;
     }
 
+    if (workspaceView === "analytics") {
+      setSelectedActivityOrganizationId(
+        (current) =>
+          filteredActivityOrganizations.find((organization) => organization.organizationId === current)?.organizationId ??
+          filteredActivityOrganizations[0]?.organizationId ??
+          null
+      );
+      return;
+    }
+
     setSelectedThreadId((current) => inboxThreads.find((thread) => thread.id === current)?.id ?? inboxThreads[0]?.id ?? null);
-  }, [filteredFollowUps, filteredOrganizations, inboxThreads, organizationThreads, workspaceView]);
+  }, [filteredActivityOrganizations, filteredFollowUps, filteredOrganizations, inboxThreads, organizationThreads, workspaceView]);
 
   const workspaceTitle =
     workspaceView === "inbox"
@@ -731,18 +815,22 @@ export function MailApp() {
           : "All Mail"
       : workspaceView === "accounts"
         ? "Accounts"
-        : workspaceView === "followups"
-          ? "Follow-ups"
-          : "Thunderbird Live";
+      : workspaceView === "followups"
+        ? "Follow-ups"
+      : workspaceView === "analytics"
+        ? "Analytics"
+        : "Thunderbird Live";
 
   const workspaceCopy =
     workspaceView === "inbox"
       ? "Triage the next important thread, then work the conversation in one place."
       : workspaceView === "accounts"
         ? "Group work by company so client pressure and stale accounts are visible."
-        : workspaceView === "followups"
-          ? "Run the reminder queue without digging through raw inbox history."
-          : "Browse Thunderbird directly, then pull the right mailbox into the AI client.";
+      : workspaceView === "followups"
+        ? "Run the reminder queue without digging through raw inbox history."
+      : workspaceView === "analytics"
+        ? "Rank client activity over time and answer who has been busiest in a given window."
+      : "Browse Thunderbird directly, then pull the right mailbox into the AI client.";
 
   const selectedImportSummary = imports[0] ?? null;
   const liveHeaderName =
@@ -777,6 +865,10 @@ export function MailApp() {
             <button className={`nav-button ${workspaceView === "followups" ? "active" : ""}`} onClick={() => setWorkspaceView("followups")} data-testid="workspace-nav-followups">
               <Clock3 size={18} />
               <span>Follow-ups</span>
+            </button>
+            <button className={`nav-button ${workspaceView === "analytics" ? "active" : ""}`} onClick={() => setWorkspaceView("analytics")} data-testid="workspace-nav-analytics">
+              <BrainCircuit size={18} />
+              <span>Analytics</span>
             </button>
             <button className={`nav-button ${workspaceView === "live" ? "active" : ""}`} onClick={() => setWorkspaceView("live")} data-testid="workspace-nav-live">
               <PlugZap size={18} />
@@ -814,13 +906,31 @@ export function MailApp() {
                 placeholder={
                   workspaceView === "live"
                     ? "Search Thunderbird subject, sender, or recipient"
+                    : workspaceView === "analytics"
+                      ? "Search client, domain, category, or kind"
                     : "Search subject, account, company, person, or follow-up"
                 }
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 data-testid="global-search"
               />
-              {workspaceView === "live" ? (
+              {workspaceView === "analytics" ? (
+                <div className="segmented-control analytics-range" data-testid="analytics-range-selector">
+                  {([1, 4, 6] as const).map((months) => (
+                    <button
+                      key={months}
+                      className={selectedAnalyticsMonths === months ? "active" : ""}
+                      onClick={() => {
+                        setSelectedAnalyticsMonths(months);
+                        void refreshOrganizationActivity(months);
+                      }}
+                      type="button"
+                    >
+                      {months}m
+                    </button>
+                  ))}
+                </div>
+              ) : workspaceView === "live" ? (
                 <button className="client-button secondary" onClick={() => void refreshThunderbirdStatus()}>
                   <RefreshCcw size={16} />
                   Refresh live
@@ -843,7 +953,7 @@ export function MailApp() {
             </div>
           </header>
 
-          {workspaceView !== "live" ? (
+          {workspaceView !== "live" && workspaceView !== "analytics" ? (
             <section className="mailbox-strip">
               <div className="mailbox-strip-group">
                 <span className="eyebrow">Accounts</span>
@@ -1012,6 +1122,49 @@ export function MailApp() {
                       ))
                     ) : (
                       <div className="empty-state compact">Organizations appear after the client learns thread participants.</div>
+                    )}
+                  </div>
+                </>
+              ) : null}
+
+              {workspaceView === "analytics" ? (
+                <>
+                  <div className="pane-header">
+                    <div>
+                      <div className="eyebrow">Client activity</div>
+                      <h3>Most active clients</h3>
+                    </div>
+                    <span className="soft-tag">{filteredActivityOrganizations.length} organizations</span>
+                  </div>
+
+                  <div className="thread-list" data-testid="analytics-list">
+                    {filteredActivityOrganizations.length > 0 ? (
+                      filteredActivityOrganizations.map((organization) => (
+                        <button
+                          key={organization.organizationId}
+                          className={`thread-row ${organization.organizationId === selectedActivityOrganization?.organizationId ? "active" : ""}`}
+                          onClick={() => setSelectedActivityOrganizationId(organization.organizationId)}
+                          data-testid={`activity-row-${organization.organizationId}`}
+                        >
+                          <div className="thread-row-top">
+                            <strong>{organization.name}</strong>
+                            <span>{organization.primaryDomain ?? organization.kind.toLowerCase()}</span>
+                          </div>
+                          <div className="thread-row-subject">
+                            {formatCount(organization.messageCount)} messages across {formatCount(organization.threadCount)} threads
+                          </div>
+                          <p>
+                            {formatCount(organization.inboundMessageCount)} inbound, {formatCount(organization.outboundMessageCount)} outbound
+                          </p>
+                          <div className="thread-row-meta">
+                            <span className={`status-tag ${activityTone(organization.inferredKind)}`}>{organization.inferredKind.toLowerCase()}</span>
+                            <span className="soft-tag">{dominantCategoryLabel(organization.dominantCategory)}</span>
+                            <span className="count-tag">{formatCount(organization.uniqueContactCount)} contacts</span>
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="empty-state compact">No activity matches this window yet.</div>
                     )}
                   </div>
                 </>
@@ -1192,6 +1345,66 @@ export function MailApp() {
                 ) : (
                   <div className="empty-state">Choose a live Thunderbird message to inspect it here.</div>
                 )
+              ) : workspaceView === "analytics" ? (
+                selectedActivityOrganization ? (
+                  <>
+                    <div className="reader-hero">
+                      <div>
+                        <div className="eyebrow">Activity summary</div>
+                        <h3 data-testid="reader-subject">{selectedActivityOrganization.name}</h3>
+                        <p className="reader-copy">
+                          Based on the last {organizationActivity?.window.months ?? selectedAnalyticsMonths} months, this client has been especially active.
+                        </p>
+                      </div>
+                      <div className="hero-chip-group">
+                        <span className={`status-tag ${activityTone(selectedActivityOrganization.inferredKind)}`}>
+                          {selectedActivityOrganization.inferredKind.toLowerCase()}
+                        </span>
+                        <span className="soft-tag">{dominantCategoryLabel(selectedActivityOrganization.dominantCategory)}</span>
+                      </div>
+                    </div>
+
+                    <div className="reader-summary-grid">
+                      <div className="summary-tile">
+                        <span>Messages</span>
+                        <strong>{formatCount(selectedActivityOrganization.messageCount)}</strong>
+                      </div>
+                      <div className="summary-tile">
+                        <span>Threads</span>
+                        <strong>{formatCount(selectedActivityOrganization.threadCount)}</strong>
+                      </div>
+                      <div className="summary-tile">
+                        <span>Contacts</span>
+                        <strong>{formatCount(selectedActivityOrganization.uniqueContactCount)}</strong>
+                      </div>
+                    </div>
+
+                    <div className="reader-card">
+                      <div className="pane-header">
+                        <div>
+                          <div className="eyebrow">Activity breakdown</div>
+                          <h3>Inbound vs outbound</h3>
+                        </div>
+                      </div>
+                      <div className="metric-stack">
+                        <div className="metric-row">
+                          <span>Inbound</span>
+                          <strong>{formatCount(selectedActivityOrganization.inboundMessageCount)}</strong>
+                        </div>
+                        <div className="metric-row">
+                          <span>Outbound</span>
+                          <strong>{formatCount(selectedActivityOrganization.outboundMessageCount)}</strong>
+                        </div>
+                        <div className="metric-row">
+                          <span>Last message</span>
+                          <strong>{formatDate(selectedActivityOrganization.lastMessageAt)}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="empty-state">Choose an organization to inspect its activity profile.</div>
+                )
               ) : selectedThread ? (
                 <>
                   <div className="reader-hero">
@@ -1362,6 +1575,39 @@ export function MailApp() {
                       </div>
                     ))}
                   </div>
+                </div>
+              ) : null}
+
+              {workspaceView === "analytics" ? (
+                <div className="inspector-card">
+                  <div className="pane-header">
+                    <div>
+                      <div className="eyebrow">Interpretation</div>
+                      <h3>What the ranking means</h3>
+                    </div>
+                    <BrainCircuit size={18} />
+                  </div>
+                  <div className="metric-stack">
+                    <div className="metric-row">
+                      <span>Window</span>
+                      <strong>{organizationActivity ? `${organizationActivity.window.months} months` : `${selectedAnalyticsMonths} months`}</strong>
+                    </div>
+                    <div className="metric-row">
+                      <span>Organizations</span>
+                      <strong>{formatCount(organizationActivity?.summary.organizationCount ?? 0)}</strong>
+                    </div>
+                    <div className="metric-row">
+                      <span>Total messages</span>
+                      <strong>{formatCount(organizationActivity?.summary.messageCount ?? 0)}</strong>
+                    </div>
+                    <div className="metric-row">
+                      <span>Unique contacts</span>
+                      <strong>{formatCount(organizationActivity?.summary.uniqueContactCount ?? 0)}</strong>
+                    </div>
+                  </div>
+                  <p className="inspector-copy">
+                    This view is deterministic analytics, not model output. It answers which clients were busiest before we layer GPT-based summaries on top.
+                  </p>
                 </div>
               ) : null}
 

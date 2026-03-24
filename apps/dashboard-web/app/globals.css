@@ -520,6 +520,14 @@ a {
   box-shadow: 0 6px 18px rgba(22, 35, 52, 0.08);
 }
 
+.analytics-range {
+  align-self: center;
+}
+
+.analytics-range button {
+  min-width: 54px;
+}
+
 .reader-hero {
   align-items: flex-start;
   padding: 22px;

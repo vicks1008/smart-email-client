@@ -210,6 +210,38 @@ export type ImportJobSummary = {
   };
 };
 
+export type OrganizationActivityItem = {
+  organizationId: string;
+  name: string;
+  primaryDomain: string | null;
+  kind: "INTERNAL" | "CLIENT" | "VENDOR" | "LEAD" | "UNKNOWN";
+  inferredKind: "INTERNAL" | "CLIENT" | "VENDOR" | "LEAD" | "UNKNOWN";
+  dominantCategory: "CLIENT" | "LEAD" | "VENDOR" | "INTERNAL" | "BILLING" | "SUPPORT" | "NEWSLETTER" | "NOTIFICATION" | null;
+  threadCount: number;
+  messageCount: number;
+  inboundMessageCount: number;
+  outboundMessageCount: number;
+  uniqueContactCount: number;
+  lastMessageAt: string | null;
+};
+
+export type OrganizationActivityReport = {
+  window: {
+    months: number;
+    startAt: string;
+    endAt: string;
+  };
+  summary: {
+    organizationCount: number;
+    threadCount: number;
+    messageCount: number;
+    inboundMessageCount: number;
+    outboundMessageCount: number;
+    uniqueContactCount: number;
+  };
+  organizations: OrganizationActivityItem[];
+};
+
 export type ThunderbirdStatus = {
   available: boolean;
   profilePaths: string[];
@@ -380,6 +412,19 @@ export async function fetchThread(threadId: string) {
 export async function fetchWorkbench(mailboxId?: string) {
   const query = mailboxId ? `?mailboxId=${encodeURIComponent(mailboxId)}` : "";
   return apiFetch<WorkbenchData>(`/v1/workbench${query}`);
+}
+
+export async function fetchOrganizationActivity(months = 4, limit = 25, mailboxId?: string) {
+  const params = new URLSearchParams({
+    months: String(months),
+    limit: String(limit)
+  });
+
+  if (mailboxId) {
+    params.set("mailboxId", mailboxId);
+  }
+
+  return apiFetch<OrganizationActivityReport>(`/v1/analytics/organizations/activity?${params.toString()}`);
 }
 
 export async function fetchThunderbirdStatus() {

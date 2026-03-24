@@ -3,6 +3,11 @@ export type { NormalizedMessage } from "./mail-sync";
 
 export { prisma } from "./db";
 export { getEnv, hasMicrosoftOAuthConfig } from "./env";
+export {
+  getOrganizationActivity as getOrganizationActivityAnalytics,
+  type OrganizationActivityAnalytics,
+  type OrganizationActivityRecord
+} from "./analytics";
 export { applyThreadIntelligence, inferMailboxRole, rebuildIntelligence } from "./intelligence";
 export {
   getThunderbirdFolderStatistics,

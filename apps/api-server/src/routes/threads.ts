@@ -1,6 +1,39 @@
-import { FollowUpTaskStatus, prisma } from "@smart-email/core";
+import {
+  FollowUpTaskStatus,
+  MessageCategoryLabel,
+  OrganizationKind,
+  getOrganizationActivityAnalytics,
+  prisma
+} from "@smart-email/core";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+
+function normalizeAddress(address?: string | null) {
+  return address?.trim().toLowerCase() ?? "";
+}
+
+function domainFromAddress(address?: string | null) {
+  const normalized = normalizeAddress(address);
+  const [, domain = ""] = normalized.split("@");
+  return domain;
+}
+
+function inferredKindFromCategory(label: MessageCategoryLabel | null) {
+  switch (label) {
+    case MessageCategoryLabel.CLIENT:
+      return OrganizationKind.CLIENT;
+    case MessageCategoryLabel.LEAD:
+      return OrganizationKind.LEAD;
+    case MessageCategoryLabel.VENDOR:
+    case MessageCategoryLabel.BILLING:
+    case MessageCategoryLabel.SUPPORT:
+      return OrganizationKind.VENDOR;
+    case MessageCategoryLabel.INTERNAL:
+      return OrganizationKind.INTERNAL;
+    default:
+      return OrganizationKind.UNKNOWN;
+  }
+}
 
 function serializeThread(thread: Awaited<ReturnType<typeof getThreadList>>[number]) {
   const latestMessage = thread.messages[0];
@@ -67,6 +100,12 @@ function serializeThread(thread: Awaited<ReturnType<typeof getThreadList>>[numbe
 function endOfToday() {
   const value = new Date();
   value.setHours(23, 59, 59, 999);
+  return value;
+}
+
+function monthsAgo(months: number) {
+  const value = new Date();
+  value.setMonth(value.getMonth() - months);
   return value;
 }
 
@@ -261,6 +300,222 @@ async function getWorkbenchData(mailboxId?: string, limit = 24) {
   };
 }
 
+async function getOrganizationActivity(mailboxId?: string, months = 4, limit = 25) {
+  const startAt = monthsAgo(months);
+  const endAt = new Date();
+  const mailboxes = await prisma.mailbox.findMany({
+    select: {
+      emailAddress: true
+    }
+  });
+  const internalAddresses = new Set(mailboxes.map((entry) => normalizeAddress(entry.emailAddress)).filter(Boolean));
+  const internalDomains = new Set(mailboxes.map((entry) => domainFromAddress(entry.emailAddress)).filter(Boolean));
+
+  const threads = await prisma.thread.findMany({
+    where: {
+      ...(mailboxId ? { mailboxId } : {}),
+      lastMessageAt: {
+        gte: startAt
+      },
+      participantsExpanded: {
+        some: {
+          isMailbox: false,
+          organizationId: {
+            not: null
+          }
+        }
+      },
+      messages: {
+        some: {
+          receivedAt: {
+            gte: startAt
+          }
+        }
+      }
+    },
+    include: {
+      mailbox: true,
+      replyState: true,
+      participantsExpanded: {
+        include: {
+          organization: true
+        }
+      },
+      messages: {
+        where: {
+          receivedAt: {
+            gte: startAt
+          }
+        },
+        orderBy: {
+          receivedAt: "desc"
+        },
+        include: {
+          category: {
+            select: {
+              label: true
+            }
+          }
+        }
+      }
+    }
+  });
+
+  const totals = threads.reduce(
+    (accumulator, thread) => {
+      const organization =
+        thread.participantsExpanded.find(
+          (participant) => !participant.isMailbox && participant.organization && participant.organization.kind !== "INTERNAL"
+        )?.organization ?? null;
+
+      if (!organization) {
+        return accumulator;
+      }
+
+      const current = accumulator.organizations.get(organization.id) ?? {
+        organizationId: organization.id,
+        name: organization.name,
+        kind: organization.kind,
+        inferredKind: organization.kind,
+        primaryDomain: organization.primaryDomain,
+        dominantCategory: null as null,
+        threadCount: 0,
+        messageCount: 0,
+        inboundMessageCount: 0,
+        outboundMessageCount: 0,
+        uniqueContactCount: 0,
+        needsReply: 0,
+        waitingOnThem: 0,
+        lastMessageAt: thread.lastMessageAt,
+        mailboxes: new Set<string>(),
+        contacts: new Set<string>(),
+        categoryCounts: new Map<MessageCategoryLabel, number>()
+      };
+
+      current.threadCount += 1;
+      current.needsReply += thread.replyState?.needsReply ? 1 : 0;
+      current.waitingOnThem += thread.replyState?.waitingOnThem ? 1 : 0;
+      current.mailboxes.add(thread.mailbox.displayName);
+      thread.participantsExpanded
+        .filter((participant) => !participant.isMailbox && participant.organizationId === organization.id)
+        .forEach((participant) => current.contacts.add(participant.emailAddress));
+
+      for (const message of thread.messages) {
+        current.messageCount += 1;
+        if (message.receivedAt > current.lastMessageAt) {
+          current.lastMessageAt = message.receivedAt;
+        }
+
+        if (message.category?.label) {
+          current.categoryCounts.set(message.category.label, (current.categoryCounts.get(message.category.label) ?? 0) + 1);
+        }
+
+        const normalizedFrom = normalizeAddress(message.fromAddress);
+        const fromDomain = domainFromAddress(normalizedFrom);
+        const isOutbound = internalAddresses.has(normalizedFrom) || internalDomains.has(fromDomain);
+        if (isOutbound) {
+          current.outboundMessageCount += 1;
+        } else {
+          current.inboundMessageCount += 1;
+        }
+      }
+
+      accumulator.organizations.set(organization.id, current);
+      accumulator.threadCount += 1;
+      accumulator.messageCount += thread.messages.length;
+      return accumulator;
+    },
+    {
+      organizations: new Map<
+        string,
+        {
+          organizationId: string;
+          name: string;
+          kind: string;
+          inferredKind: string;
+          primaryDomain: string | null;
+          dominantCategory: null;
+          threadCount: number;
+          messageCount: number;
+          inboundMessageCount: number;
+          outboundMessageCount: number;
+          uniqueContactCount: number;
+          needsReply: number;
+          waitingOnThem: number;
+          lastMessageAt: Date;
+          mailboxes: Set<string>;
+          contacts: Set<string>;
+          categoryCounts: Map<MessageCategoryLabel, number>;
+        }
+      >(),
+      threadCount: 0,
+      messageCount: 0
+    }
+  );
+
+  const organizations = Array.from(totals.organizations.values())
+    .map((organization) => {
+      const dominantCategory =
+        Array.from(organization.categoryCounts.entries()).sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+      const inferredKind =
+        organization.kind === OrganizationKind.UNKNOWN ? inferredKindFromCategory(dominantCategory) : organization.kind;
+
+      return {
+        ...organization,
+        dominantCategory,
+        inferredKind
+      };
+    })
+    .filter((organization) => organization.inferredKind === OrganizationKind.CLIENT)
+    .sort((left, right) => {
+      if (right.messageCount !== left.messageCount) {
+        return right.messageCount - left.messageCount;
+      }
+
+      if (right.threadCount !== left.threadCount) {
+        return right.threadCount - left.threadCount;
+      }
+
+      return right.lastMessageAt.getTime() - left.lastMessageAt.getTime();
+    })
+    .slice(0, limit)
+    .map((organization) => ({
+      organizationId: organization.organizationId,
+      name: organization.name,
+      kind: organization.kind,
+      inferredKind: organization.inferredKind,
+      primaryDomain: organization.primaryDomain,
+      dominantCategory: organization.dominantCategory,
+      threadCount: organization.threadCount,
+      messageCount: organization.messageCount,
+      inboundMessageCount: organization.inboundMessageCount,
+      outboundMessageCount: organization.outboundMessageCount,
+      uniqueContactCount: organization.contacts.size,
+      lastMessageAt: organization.lastMessageAt,
+      openNeedsReplyCount: organization.needsReply,
+      waitingOnThemCount: organization.waitingOnThem,
+      mailboxes: Array.from(organization.mailboxes.values()).sort(),
+      activityShare: totals.messageCount > 0 ? Number((organization.messageCount / totals.messageCount).toFixed(4)) : 0
+    }));
+
+  return {
+    window: {
+      months,
+      startAt,
+      endAt
+    },
+    summary: {
+      organizationCount: organizations.length,
+      threadCount: totals.threadCount,
+      messageCount: totals.messageCount,
+      inboundMessageCount: organizations.reduce((sum, organization) => sum + organization.inboundMessageCount, 0),
+      outboundMessageCount: organizations.reduce((sum, organization) => sum + organization.outboundMessageCount, 0),
+      uniqueContactCount: organizations.reduce((sum, organization) => sum + organization.uniqueContactCount, 0)
+    },
+    organizations
+  };
+}
+
 export async function registerThreadRoutes(app: FastifyInstance) {
   app.get("/v1/threads", async (request) => {
     const query = z
@@ -286,6 +541,22 @@ export async function registerThreadRoutes(app: FastifyInstance) {
       .parse(request.query);
 
     return getWorkbenchData(query.mailboxId, query.limit ?? 24);
+  });
+
+  app.get("/v1/analytics/organizations/activity", async (request) => {
+    const query = z
+      .object({
+        mailboxId: z.string().cuid().optional(),
+        months: z.coerce.number().int().min(1).max(24).optional(),
+        limit: z.coerce.number().int().min(1).max(50).optional()
+      })
+      .parse(request.query);
+
+    return getOrganizationActivityAnalytics({
+      mailboxId: query.mailboxId,
+      months: query.months ?? 4,
+      limit: query.limit ?? 25
+    });
   });
 
   app.get("/v1/threads/:threadId", async (request, reply) => {
