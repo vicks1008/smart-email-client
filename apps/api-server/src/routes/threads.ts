@@ -494,8 +494,22 @@ async function getOrganizationActivity(mailboxId?: string, months = 4, limit = 2
       openNeedsReplyCount: organization.needsReply,
       waitingOnThemCount: organization.waitingOnThem,
       mailboxes: Array.from(organization.mailboxes.values()).sort(),
-      activityShare: totals.messageCount > 0 ? Number((organization.messageCount / totals.messageCount).toFixed(4)) : 0
+      activityShare: 0
     }));
+
+  const summary = {
+    organizationCount: organizations.length,
+    threadCount: organizations.reduce((sum, organization) => sum + organization.threadCount, 0),
+    messageCount: organizations.reduce((sum, organization) => sum + organization.messageCount, 0),
+    inboundMessageCount: organizations.reduce((sum, organization) => sum + organization.inboundMessageCount, 0),
+    outboundMessageCount: organizations.reduce((sum, organization) => sum + organization.outboundMessageCount, 0),
+    uniqueContactCount: organizations.reduce((sum, organization) => sum + organization.uniqueContactCount, 0)
+  };
+
+  const organizationsWithShare = organizations.map((organization) => ({
+    ...organization,
+    activityShare: summary.messageCount > 0 ? Number((organization.messageCount / summary.messageCount).toFixed(4)) : 0
+  }));
 
   return {
     window: {
@@ -503,15 +517,8 @@ async function getOrganizationActivity(mailboxId?: string, months = 4, limit = 2
       startAt,
       endAt
     },
-    summary: {
-      organizationCount: organizations.length,
-      threadCount: totals.threadCount,
-      messageCount: totals.messageCount,
-      inboundMessageCount: organizations.reduce((sum, organization) => sum + organization.inboundMessageCount, 0),
-      outboundMessageCount: organizations.reduce((sum, organization) => sum + organization.outboundMessageCount, 0),
-      uniqueContactCount: organizations.reduce((sum, organization) => sum + organization.uniqueContactCount, 0)
-    },
-    organizations
+    summary,
+    organizations: organizationsWithShare
   };
 }
 
