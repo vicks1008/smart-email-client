@@ -92,9 +92,10 @@ The app is currently in an early Phase 2 state:
 
 - shared mail, contact, organization, category, reply-state, and follow-up data models are in place
 - Microsoft OAuth callback flow exists for direct Graph-based mailbox access
-- Thunderbird MCP remains available as a local live-mail source
+- Outlook MCP auth-sidecar support now drives the recommended live mailbox view
+- Thunderbird MCP remains available as a legacy local live-mail source
 - archive import remains available for `.olm` and `.eml`
-- the `/mail` workspace now includes inbox, accounts, follow-ups, live Thunderbird, and analytics views
+- the `/mail` workspace now includes inbox, accounts, follow-ups, live Outlook, and analytics views
 - organization activity analytics now support questions like "which clients were most active in the last 4 months?"
 
 Shared mailbox workflows are still incomplete and should be treated as in-progress. For Microsoft Graph, shared mailbox behavior depends on delegated mailbox access plus the correct `Shared` Graph permissions.
@@ -120,11 +121,45 @@ The persistent product target for this repo includes:
 The app currently supports multiple ways to get mail into the same intelligence layer:
 
 - Microsoft OAuth and Graph for first-party mailbox access
+- Outlook MCP auth-sidecar plus Graph-backed live browsing on localhost
 - Thunderbird MCP for local live mailbox access
 - Outlook archive import via `.olm`
 - targeted `.eml` import for recovery or testing
 
-The preferred architecture is still direct Microsoft Graph when available. Thunderbird and archive import are useful bridges and fallbacks, not the final product direction.
+The preferred architecture is still first-party Microsoft Graph when available. Outlook MCP is the most practical bridge when direct callback approval is blocked, while Thunderbird and archive import remain fallbacks.
+
+## Outlook MCP Live Source
+
+The app now supports a local Outlook MCP route by using the `outlook-mcp` auth helper on `localhost:3333` and then reading Outlook mail through Graph with the saved token cache. This avoids scraping Outlook Web and keeps the `/mail` live workspace structured.
+
+Local setup on this machine:
+
+```bash
+git clone https://github.com/ryaker/outlook-mcp.git tools/outlook-mcp
+cd tools/outlook-mcp
+npm install
+```
+
+Azure app requirements for this route:
+
+- redirect URI: `http://localhost:3333/auth/callback`
+- delegated permissions:
+  - `offline_access`
+  - `User.Read`
+  - `Mail.Read`
+  - `Mail.ReadWrite`
+  - `Mail.Read.Shared`
+  - `Mail.ReadWrite.Shared`
+  - `Mail.Send`
+
+Run the auth helper with the same Microsoft credentials you keep in the repo `.env`:
+
+```bash
+cd tools/outlook-mcp
+MS_CLIENT_ID=... MS_CLIENT_SECRET=... MS_TENANT_ID=... MS_SCOPES="offline_access User.Read Mail.Read Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send" npm run auth-server
+```
+
+Then open `/mail`, use `Connect Outlook MCP`, finish sign-in in the browser window, and refresh the live workspace.
 
 ## Thunderbird Live Source
 

@@ -35,34 +35,35 @@ import {
   addSharedMailbox,
   fetchAccounts,
   fetchImports,
+  fetchOutlookMcpAccounts as fetchThunderbirdAccounts,
+  fetchOutlookMcpFolders as fetchThunderbirdFolders,
+  fetchOutlookMcpMessage as fetchThunderbirdMessage,
+  fetchOutlookMcpRecentMessages as fetchThunderbirdRecentMessages,
+  fetchOutlookMcpStatus as fetchThunderbirdStatus,
   fetchThread,
   fetchThreads,
   fetchThunderbirdDiscoveredMailboxes,
-  fetchThunderbirdAccounts,
-  fetchThunderbirdFolders,
-  fetchThunderbirdMessage,
-  fetchThunderbirdRecentMessages,
   fetchThunderbirdSyncSources,
-  fetchThunderbirdStatus,
   fetchOrganizationActivity,
   fetchWorkbench,
   getMicrosoftConnectUrl,
+  getOutlookMcpConnectUrl,
   queueSync,
-  searchThunderbirdMessages,
+  searchOutlookMcpMessages as searchThunderbirdMessages,
   syncAllThunderbirdMailboxes,
   syncThunderbirdMailbox,
   uploadArchive,
   type AccountSummary,
   type ImportJobSummary,
+  type OutlookMcpAccount as ThunderbirdAccount,
+  type OutlookMcpFolder as ThunderbirdFolder,
+  type OutlookMcpMessageDetail as ThunderbirdMessageDetail,
+  type OutlookMcpMessageSummary as ThunderbirdMessageSummary,
+  type OutlookMcpStatus as ThunderbirdStatus,
   type ThreadDetail,
   type ThreadSummary,
-  type ThunderbirdAccount,
   type ThunderbirdDiscoveredMailbox,
-  type ThunderbirdFolder,
-  type ThunderbirdMessageDetail,
-  type ThunderbirdMessageSummary,
   type ThunderbirdSyncSource,
-  type ThunderbirdStatus,
   type OrganizationActivityItem,
   type OrganizationActivityReport,
   type WorkbenchData
@@ -377,7 +378,7 @@ export function MailApp() {
       const status = await fetchThunderbirdStatus();
       setThunderbirdStatus(status);
 
-      if (status.available) {
+      if (status.authenticated) {
         const data = await fetchThunderbirdAccounts();
         setThunderbirdAccounts(data.accounts);
         await refreshThunderbirdDiscovery();
@@ -386,42 +387,42 @@ export function MailApp() {
           const nextAccount = data.accounts[0] ?? null;
           setSelectedThunderbirdAccountId(nextAccount?.id ?? null);
         });
+      } else {
+        setThunderbirdAccounts([]);
+        setThunderbirdFolders([]);
+        setThunderbirdMessages([]);
+        setSelectedThunderbirdAccountId(null);
+        setSelectedThunderbirdFolderPath(null);
+        setSelectedThunderbirdMessageId(null);
       }
     } catch (error) {
       setThunderbirdStatus({
         available: false,
-        profilePaths: [],
-        bridgeUrl: "http://127.0.0.1:8765",
-        error: error instanceof Error ? error.message : "Thunderbird status check failed."
+        authenticated: false,
+        authServerReachable: false,
+        bridgeUrl: "http://127.0.0.1:3333",
+        tokenStorePath: "",
+        error: error instanceof Error ? error.message : "Outlook MCP status check failed."
       });
     }
   }
 
   async function refreshThunderbirdDiscovery() {
-    try {
-      const [discovered, sources] = await Promise.all([
-        fetchThunderbirdDiscoveredMailboxes(),
-        fetchThunderbirdSyncSources()
-      ]);
-      setThunderbirdDiscoveredMailboxes(discovered.mailboxes);
-      setThunderbirdSyncSources(sources.sources);
-      setSelectedThunderbirdCandidateEmail((current) => current || discovered.mailboxes[0]?.mailboxEmail || "");
-    } catch {
-      setThunderbirdDiscoveredMailboxes([]);
-      setThunderbirdSyncSources([]);
-    }
+    setThunderbirdDiscoveredMailboxes([]);
+    setThunderbirdSyncSources([]);
+    setSelectedThunderbirdCandidateEmail("");
   }
 
   async function refreshThunderbirdFolders(accountId: string) {
     try {
-      const data = await fetchThunderbirdFolders(accountId);
+      const data = await fetchThunderbirdFolders();
       setThunderbirdFolders(data.folders);
       setSelectedThunderbirdFolderPath((current) => {
         const retained = data.folders.find((folder) => folder.path === current)?.path;
         return retained ?? data.folders.find((folder) => folder.type === "inbox")?.path ?? data.folders[0]?.path ?? null;
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load Thunderbird folders.");
+      toast.error(error instanceof Error ? error.message : "Failed to load Outlook folders.");
     }
   }
 
@@ -438,7 +439,7 @@ export function MailApp() {
         return retained ?? data.messages[0]?.id ?? null;
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load Thunderbird messages.");
+      toast.error(error instanceof Error ? error.message : "Failed to load Outlook messages.");
     }
   }
 
@@ -450,7 +451,7 @@ export function MailApp() {
         attachments: data.message.attachments ?? []
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load Thunderbird message.");
+      toast.error(error instanceof Error ? error.message : "Failed to load Outlook message.");
     }
   }
 
@@ -819,7 +820,7 @@ export function MailApp() {
         ? "Follow-ups"
       : workspaceView === "analytics"
         ? "Analytics"
-        : "Thunderbird Live";
+        : "Outlook MCP Live";
 
   const workspaceCopy =
     workspaceView === "inbox"
@@ -830,13 +831,13 @@ export function MailApp() {
         ? "Run the reminder queue without digging through raw inbox history."
       : workspaceView === "analytics"
         ? "Rank client activity over time and answer who has been busiest in a given window."
-      : "Browse Thunderbird directly, then pull the right mailbox into the AI client.";
+      : "Browse Outlook live through the local MCP auth flow, then use imports and workbench intelligence alongside it.";
 
   const selectedImportSummary = imports[0] ?? null;
   const liveHeaderName =
     thunderbirdFolders.find((folder) => folder.path === selectedThunderbirdFolderPath)?.name ??
     selectedThunderbirdAccount?.name ??
-    "Thunderbird";
+    "Outlook";
   const draftTemplates = draftTemplatesForThread(selectedThread);
 
   return (
@@ -905,10 +906,10 @@ export function MailApp() {
                 className="client-search"
                 placeholder={
                   workspaceView === "live"
-                    ? "Search Thunderbird subject, sender, or recipient"
+                    ? "Search Outlook subject, sender, or recipient"
                     : workspaceView === "analytics"
                       ? "Search client, domain, category, or kind"
-                    : "Search subject, account, company, person, or follow-up"
+                      : "Search subject, account, company, person, or follow-up"
                 }
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -931,10 +932,17 @@ export function MailApp() {
                   ))}
                 </div>
               ) : workspaceView === "live" ? (
-                <button className="client-button secondary" onClick={() => void refreshThunderbirdStatus()}>
-                  <RefreshCcw size={16} />
-                  Refresh live
-                </button>
+                thunderbirdStatus?.authenticated ? (
+                  <button className="client-button secondary" onClick={() => void refreshThunderbirdStatus()}>
+                    <RefreshCcw size={16} />
+                    Refresh live
+                  </button>
+                ) : (
+                  <button className="client-button primary" onClick={() => (window.location.href = getOutlookMcpConnectUrl())}>
+                    <MailPlus size={16} />
+                    Connect Outlook MCP
+                  </button>
+                )
               ) : (
                 <>
                   <button
@@ -1174,12 +1182,12 @@ export function MailApp() {
                 <>
                   <div className="pane-header">
                     <div>
-                      <div className="eyebrow">Thunderbird</div>
+                      <div className="eyebrow">Outlook MCP</div>
                       <h3>{liveHeaderName}</h3>
                     </div>
-                    <div className={`status-tag ${thunderbirdStatus?.available ? "active" : "warning"}`}>
-                      {thunderbirdStatus?.available ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                      {thunderbirdStatus?.available ? "Online" : "Offline"}
+                    <div className={`status-tag ${thunderbirdStatus?.authenticated ? "active" : "warning"}`}>
+                      {thunderbirdStatus?.authenticated ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                      {thunderbirdStatus?.authenticated ? "Authenticated" : thunderbirdStatus?.authServerReachable ? "Needs sign-in" : "Offline"}
                     </div>
                   </div>
 
@@ -1234,7 +1242,11 @@ export function MailApp() {
                       ))
                     ) : (
                       <div className="empty-state compact">
-                        {thunderbirdStatus?.available ? "No live messages loaded yet." : "Thunderbird is not reachable on localhost."}
+                        {thunderbirdStatus?.authenticated
+                          ? "No live messages loaded yet."
+                          : thunderbirdStatus?.authServerReachable
+                            ? "Connect Outlook MCP to load live messages."
+                            : "Outlook MCP auth server is not reachable on localhost."}
                       </div>
                     )}
                   </div>
@@ -1343,7 +1355,7 @@ export function MailApp() {
                     </div>
                   </>
                 ) : (
-                  <div className="empty-state">Choose a live Thunderbird message to inspect it here.</div>
+                  <div className="empty-state">Choose a live Outlook message to inspect it here.</div>
                 )
               ) : workspaceView === "analytics" ? (
                 selectedActivityOrganization ? (
@@ -1616,7 +1628,7 @@ export function MailApp() {
                   <div className="pane-header">
                     <div>
                       <div className="eyebrow">Live metadata</div>
-                      <h3>Thunderbird details</h3>
+                      <h3>Outlook details</h3>
                     </div>
                     <PanelLeft size={18} />
                   </div>
@@ -1653,66 +1665,38 @@ export function MailApp() {
                 <details className="client-details" open={workspaceView === "live"}>
                   <summary>
                     <PlugZap size={16} />
-                    Sync from Thunderbird
+                    Connect Outlook MCP
                   </summary>
-                  <form className="client-form" onSubmit={(event) => void handleThunderbirdImport(event)}>
+                  <div className="client-form">
                     <div className="subtle-line">
-                      Pull Inbox and Sent into the client from a discovered Thunderbird mailbox.
+                      Run the local auth helper on port 3333, sign in once, then refresh this workspace to load your live Outlook inbox.
                     </div>
-                    {thunderbirdDiscoveredMailboxes.length > 0 ? (
-                      <select
-                        className="client-input"
-                        value={selectedThunderbirdCandidateEmail}
-                        onChange={(event) => {
-                          const nextEmail = event.target.value;
-                          setSelectedThunderbirdCandidateEmail(nextEmail);
-                          const candidate =
-                            thunderbirdDiscoveredMailboxes.find((entry) => entry.mailboxEmail === nextEmail) ?? null;
-                          setThunderbirdImportMailboxEmail(candidate?.isTeamMailbox ? candidate.mailboxEmail : "");
-                          setThunderbirdImportMailboxName("");
-                          setSelectedThunderbirdAccountId(candidate?.thunderbirdAccountId ?? null);
-                        }}
-                      >
-                        {thunderbirdDiscoveredMailboxes.map((candidate) => (
-                          <option key={`${candidate.thunderbirdAccountId}:${candidate.mailboxEmail}`} value={candidate.mailboxEmail}>
-                            {candidate.mailboxDisplayName} · {candidate.mailboxEmail}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="soft-panel">No discovered Thunderbird mailboxes yet.</div>
-                    )}
-                    <input
-                      className="client-input"
-                      placeholder="Optional mailbox email override"
-                      type="email"
-                      value={thunderbirdImportMailboxEmail}
-                      onChange={(event) => setThunderbirdImportMailboxEmail(event.target.value)}
-                    />
-                    <input
-                      className="client-input"
-                      placeholder="Optional mailbox display name"
-                      value={thunderbirdImportMailboxName}
-                      onChange={(event) => setThunderbirdImportMailboxName(event.target.value)}
-                    />
                     <button
-                      className="client-button secondary"
-                      disabled={isThunderbirdImportPending || (!selectedThunderbirdAccountId && thunderbirdDiscoveredMailboxes.length === 0)}
-                      type="submit"
-                    >
-                      <PlugZap size={16} />
-                      Sync selected mailbox
-                    </button>
-                    <button
-                      className="client-button secondary"
-                      disabled={isThunderbirdBulkImportPending || thunderbirdDiscoveredMailboxes.length === 0}
-                      onClick={() => void handleThunderbirdBulkImport()}
+                      className="client-button primary"
+                      onClick={() => (window.location.href = getOutlookMcpConnectUrl())}
                       type="button"
                     >
-                      <Users size={16} />
-                      Sync all discovered
+                      <MailPlus size={16} />
+                      Connect Outlook MCP
                     </button>
-                  </form>
+                    <button
+                      className="client-button secondary"
+                      onClick={() => void refreshThunderbirdStatus()}
+                      type="button"
+                    >
+                      <RefreshCcw size={16} />
+                      Refresh status
+                    </button>
+                    {thunderbirdStatus?.setupSteps?.length ? (
+                      <div className="soft-panel">
+                        {thunderbirdStatus.setupSteps.map((step) => (
+                          <div key={step} className="subtle-line">
+                            {step}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 </details>
 
                 <details className="client-details">
@@ -1787,12 +1771,12 @@ export function MailApp() {
                     <div className="eyebrow">Status</div>
                     <h3>System health</h3>
                   </div>
-                  {thunderbirdStatus?.available ? <CheckCircle2 size={18} /> : <ShieldAlert size={18} />}
+                  {thunderbirdStatus?.authenticated ? <CheckCircle2 size={18} /> : <ShieldAlert size={18} />}
                 </div>
                 <div className="metric-stack">
                   <div className="metric-row">
-                    <span>Thunderbird</span>
-                    <strong>{thunderbirdStatus?.available ? "online" : "offline"}</strong>
+                    <span>Outlook MCP</span>
+                    <strong>{thunderbirdStatus?.authenticated ? "authenticated" : thunderbirdStatus?.authServerReachable ? "auth ready" : "offline"}</strong>
                   </div>
                   <div className="metric-row">
                     <span>Selected mailbox</span>
@@ -1803,7 +1787,7 @@ export function MailApp() {
                     <strong>{selectedImportSummary?.sourceFilename ?? "None"}</strong>
                   </div>
                 </div>
-                <div className="subtle-line">{thunderbirdStatus?.bridgeUrl ?? "http://127.0.0.1:8765"}</div>
+                <div className="subtle-line">{thunderbirdStatus?.bridgeUrl ?? "http://127.0.0.1:3333"}</div>
               </div>
 
               {thunderbirdSyncSources.length > 0 ? (

@@ -10,6 +10,21 @@ export {
 } from "./analytics";
 export { applyThreadIntelligence, inferMailboxRole, rebuildIntelligence } from "./intelligence";
 export {
+  getOutlookMcpAuthUrl,
+  getOutlookMcpMessageDetail,
+  getOutlookMcpRecentMessages,
+  getOutlookMcpStatus,
+  listOutlookMcpAccounts,
+  listOutlookMcpFolders,
+  outlookMcpSetupProbe,
+  searchOutlookMcpMessages,
+  type OutlookMcpAccount,
+  type OutlookMcpFolder,
+  type OutlookMcpMessageDetail,
+  type OutlookMcpMessageSummary,
+  type OutlookMcpStatus
+} from "./outlook-mcp";
+export {
   getThunderbirdFolderStatistics,
   getThunderbirdMessageDetail,
   getThunderbirdMessageMetadata,

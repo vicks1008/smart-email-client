@@ -242,6 +242,79 @@ export type OrganizationActivityReport = {
   organizations: OrganizationActivityItem[];
 };
 
+export type OutlookMcpStatus = {
+  available: boolean;
+  authenticated: boolean;
+  authServerReachable: boolean;
+  bridgeUrl: string;
+  tokenStorePath: string;
+  serverInfo?: {
+    name: string;
+    version: string;
+  };
+  error?: string;
+  setupSteps?: string[];
+};
+
+export type OutlookMcpAccount = {
+  id: string;
+  name: string;
+  type: string;
+  identities: Array<{
+    id: string;
+    email: string;
+    name: string;
+    isDefault: boolean;
+  }>;
+};
+
+export type OutlookMcpFolder = {
+  name: string;
+  path: string;
+  type: string;
+  accountId: string;
+  totalMessages: number;
+  unreadMessages: number;
+  depth: number;
+};
+
+export type OutlookMcpMessageSummary = {
+  id: string;
+  subject: string;
+  author: string;
+  recipients: string;
+  ccList?: string;
+  date: string | null;
+  folder: string;
+  folderPath: string;
+  read: boolean;
+  flagged: boolean;
+};
+
+export type OutlookMcpMessageDetail = OutlookMcpMessageSummary & {
+  accountId: string | null;
+  accountName: string | null;
+  serverType: string | null;
+  folderType: string | null;
+  messageKey: number | null;
+  threadId: string | null;
+  threadParent: number | null;
+  references: string[];
+  inReplyTo: string | null;
+  size: number | null;
+  lineCount: number | null;
+  priority: string | null;
+  keywords: string;
+  charset: string | null;
+  body: string;
+  bodyIsHtml: boolean;
+  attachments: Array<{
+    name: string;
+    contentType: string;
+    size: number | null;
+  }>;
+};
+
 export type ThunderbirdStatus = {
   available: boolean;
   profilePaths: string[];
@@ -396,6 +469,10 @@ export function getMicrosoftConnectUrl(redirectUrl: string) {
   return `${getApiBaseUrl()}/v1/auth/microsoft/start?redirect=${encodeURIComponent(redirectUrl)}`;
 }
 
+export function getOutlookMcpConnectUrl() {
+  return `${getApiBaseUrl()}/v1/outlook-mcp/auth/start`;
+}
+
 export async function fetchAccounts() {
   return apiFetch<{ accounts: AccountSummary[] }>("/v1/mail/accounts");
 }
@@ -429,6 +506,58 @@ export async function fetchOrganizationActivity(months = 4, limit = 25, mailboxI
 
 export async function fetchThunderbirdStatus() {
   return apiFetch<ThunderbirdStatus>("/v1/thunderbird/status");
+}
+
+export async function fetchOutlookMcpStatus() {
+  return apiFetch<OutlookMcpStatus>("/v1/outlook-mcp/status");
+}
+
+export async function fetchOutlookMcpAccounts() {
+  return apiFetch<{ accounts: OutlookMcpAccount[] }>("/v1/outlook-mcp/accounts");
+}
+
+export async function fetchOutlookMcpFolders() {
+  return apiFetch<{ folders: OutlookMcpFolder[] }>("/v1/outlook-mcp/folders");
+}
+
+export async function fetchOutlookMcpRecentMessages(folderPath?: string) {
+  const params = new URLSearchParams({
+    daysBack: "14",
+    maxResults: "60"
+  });
+
+  if (folderPath) {
+    params.set("folderPath", folderPath);
+  }
+
+  return apiFetch<{ messages: OutlookMcpMessageSummary[] }>(
+    `/v1/outlook-mcp/messages/recent?${params.toString()}`
+  );
+}
+
+export async function fetchOutlookMcpMessage(messageId: string, folderPath?: string) {
+  const params = new URLSearchParams({
+    messageId
+  });
+
+  if (folderPath) {
+    params.set("folderPath", folderPath);
+  }
+
+  return apiFetch<{ message: OutlookMcpMessageDetail }>(`/v1/outlook-mcp/messages/detail?${params.toString()}`);
+}
+
+export async function searchOutlookMcpMessages(query: string, folderPath?: string) {
+  const params = new URLSearchParams({
+    query,
+    maxResults: "60"
+  });
+
+  if (folderPath) {
+    params.set("folderPath", folderPath);
+  }
+
+  return apiFetch<{ messages: OutlookMcpMessageSummary[] }>(`/v1/outlook-mcp/messages/search?${params.toString()}`);
 }
 
 export async function fetchThunderbirdDiscoveredMailboxes() {

@@ -10,4 +10,5 @@ coverage
 *.tsbuildinfo
 .venv
 tools/olm-convert
+tools/outlook-mcp
 tools/thunderbird-mcp

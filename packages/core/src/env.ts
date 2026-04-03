@@ -22,7 +22,10 @@ const envSchema = z.object({
   MAIL_SYNC_MESSAGE_LIMIT: z.coerce.number().int().min(1).max(100).default(50),
   OLM_CONVERTER_PYTHON: optionalString,
   THUNDERBIRD_MCP_URL: z.string().url().default("http://127.0.0.1:8765"),
-  THUNDERBIRD_SYNC_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300)
+  THUNDERBIRD_SYNC_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
+  OUTLOOK_MCP_AUTH_SERVER_URL: z.string().url().default("http://127.0.0.1:3333"),
+  OUTLOOK_MCP_TOKEN_STORE_PATH: optionalString,
+  OUTLOOK_MCP_SCOPES: optionalString
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
