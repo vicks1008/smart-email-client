@@ -1,13 +1,29 @@
 # Smart Email Client
 
-Standalone local smart email client for Outlook / Office365 with:
+Local-first AI email copilot for Outlook / Office365, aimed at the practical core of tools like Fyxer, Shortwave, and Superhuman:
 
-- local-first Docker Compose stack
-- Microsoft Graph mailbox sync
-- shared mailbox visibility
-- local LLM routing through Ollama
-- prompt-driven actions, reports, drafting, and follow-ups
-- background cron-style jobs
+- read and sync personal plus shared mailboxes
+- update mailbox state such as read/unread, triage, archive, and categorization
+- draft and eventually send replies in the user's voice
+- surface overdue replies, stale threads, and follow-up prompts
+- learn clients, organizations, and points of contact from historical mail
+- answer mailbox questions with deterministic analytics first, then model-assisted summaries
+- run background sync and follow-up jobs
+
+## Product Direction
+
+The product is not just a mailbox viewer. The long-term goal is an AI-assisted email workspace with four layers:
+
+- `Mailbox access`: Microsoft Graph, Thunderbird, or archive ingestion
+- `Deterministic intelligence`: organizations, contacts, reply-state, follow-up timing, and activity analytics
+- `Assistant workflows`: drafting, templates, voice learning, and thread insights
+- `Provider routing`: OpenAI for frontier reasoning, Groq for fast hosted open-weight inference, and Ollama for truly local models
+
+This ordering matters:
+
+- deterministic data and analytics come first
+- model output explains, drafts, or routes on top of structured facts
+- the app should never need an LLM to answer simple operational questions like "who were the most active clients in the last 4 months?"
 
 ## Workspace Layout
 
@@ -72,26 +88,47 @@ pnpm --filter @smart-email/dashboard-web dev
 
 ## Current Status
 
-Phase 1 foundation is now in place:
+The app is currently in an early Phase 2 state:
 
-- Prisma mail schema shared through `packages/core`
-- Fastify API with Microsoft OAuth callback flow, account/mailbox endpoints, and thread APIs
-- polling mail worker that queues and executes inbox sync jobs
-- initial Next.js `/mail` split-view UI with connect, sync, shared mailbox, and archive import controls
+- shared mail, contact, organization, category, reply-state, and follow-up data models are in place
+- Microsoft OAuth callback flow exists for direct Graph-based mailbox access
+- Thunderbird MCP remains available as a local live-mail source
+- archive import remains available for `.olm` and `.eml`
+- the `/mail` workspace now includes inbox, accounts, follow-ups, live Thunderbird, and analytics views
+- organization activity analytics now support questions like "which clients were most active in the last 4 months?"
 
-Shared mailbox discovery is manual in this first implementation. The UI supports adding a shared mailbox address under an authenticated Microsoft account, then syncing that mailbox through Graph using `/users/{mailbox}`.
+Shared mailbox workflows are still incomplete and should be treated as in-progress. For Microsoft Graph, shared mailbox behavior depends on delegated mailbox access plus the correct `Shared` Graph permissions.
 
-## Hybrid Ingest
+## Required Capabilities
 
-The MVP now supports two ingestion paths into the same mailbox view:
+The persistent product target for this repo includes:
 
-- Thunderbird MCP for live local mailbox access
-- Microsoft OAuth for live inbox sync
-- Outlook archive import via `.olm` or targeted `.eml`
+- personal mailbox sync
+- shared mailbox sync, especially team mailboxes like `hey@razzinteractive.com`
+- read/write mailbox actions
+- send or draft-send workflows
+- auto categorization
+- client and contact graph building
+- follow-up detection and reminders
+- voice learning from sent mail
+- template mining and template library support
+- analytics over historical activity
+- natural-language questions over structured mailbox data
+
+## Ingestion Strategy
+
+The app currently supports multiple ways to get mail into the same intelligence layer:
+
+- Microsoft OAuth and Graph for first-party mailbox access
+- Thunderbird MCP for local live mailbox access
+- Outlook archive import via `.olm`
+- targeted `.eml` import for recovery or testing
+
+The preferred architecture is still direct Microsoft Graph when available. Thunderbird and archive import are useful bridges and fallbacks, not the final product direction.
 
 ## Thunderbird Live Source
 
-The preferred live provider is now Thunderbird through the local MCP extension. The app talks directly to Thunderbird's localhost JSON-RPC endpoint on `8765`, so it avoids the Microsoft admin-consent bottleneck when Thunderbird itself can already access the mailbox.
+Thunderbird remains a useful local live source through the MCP extension. The app talks directly to Thunderbird's localhost JSON-RPC endpoint on `8765`, which can be valuable when a mailbox is already working in Thunderbird and direct Graph access is not yet configured.
 
 Local setup on this machine:
 
@@ -115,3 +152,12 @@ git clone https://github.com/PeterWarrington/olm-convert.git tools/olm-convert
 ```
 
 If the converter lives on a non-default Python interpreter, set `OLM_CONVERTER_PYTHON` in `.env`.
+
+## Documentation Anchor
+
+When making product decisions in this repo, optimize for:
+
+- deterministic analytics before model usage
+- read/write/send mailbox support, not read-only tooling
+- shared mailbox support as a first-class requirement
+- a real AI email workspace, not just sync infrastructure
