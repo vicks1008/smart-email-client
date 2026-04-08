@@ -5,6 +5,7 @@ import Fastify from "fastify";
 import { getEnv } from "@smart-email/core";
 
 import { registerAuthRoutes } from "./routes/auth";
+import { registerAppleMailRoutes } from "./routes/apple-mail";
 import { registerMailRoutes } from "./routes/mail";
 import { registerImportRoutes } from "./routes/imports";
 import { registerOutlookMcpRoutes } from "./routes/outlook-mcp";
@@ -42,6 +43,7 @@ export function buildApp() {
   }));
 
   app.register(registerAuthRoutes);
+  app.register(registerAppleMailRoutes);
   app.register(registerMailRoutes);
   app.register(registerImportRoutes);
   app.register(registerOutlookMcpRoutes);

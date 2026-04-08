@@ -1,6 +1,6 @@
 # Smart Email Client
 
-Local-first AI email copilot for Outlook / Office365, aimed at the practical core of tools like Fyxer, Shortwave, and Superhuman:
+Local-first AI email copilot for Mail.app, Outlook / Office365, and imported archives, aimed at the practical core of tools like Fyxer, Shortwave, and Superhuman:
 
 - read and sync personal plus shared mailboxes
 - update mailbox state such as read/unread, triage, archive, and categorization
@@ -14,7 +14,7 @@ Local-first AI email copilot for Outlook / Office365, aimed at the practical cor
 
 The product is not just a mailbox viewer. The long-term goal is an AI-assisted email workspace with four layers:
 
-- `Mailbox access`: Microsoft Graph, Thunderbird, or archive ingestion
+- `Mailbox access`: Apple Mail, Microsoft Graph, Thunderbird, or archive ingestion
 - `Deterministic intelligence`: organizations, contacts, reply-state, follow-up timing, and activity analytics
 - `Assistant workflows`: drafting, templates, voice learning, and thread insights
 - `Provider routing`: OpenAI for frontier reasoning, Groq for fast hosted open-weight inference, and Ollama for truly local models
@@ -92,10 +92,11 @@ The app is currently in an early Phase 2 state:
 
 - shared mail, contact, organization, category, reply-state, and follow-up data models are in place
 - Microsoft OAuth callback flow exists for direct Graph-based mailbox access
-- Outlook MCP auth-sidecar support now drives the recommended live mailbox view
+- Apple Mail now drives the recommended live mailbox view on macOS
 - Thunderbird MCP remains available as a legacy local live-mail source
+- Outlook MCP remains available as a fallback bridge when Mail.app is not viable
 - archive import remains available for `.olm` and `.eml`
-- the `/mail` workspace now includes inbox, accounts, follow-ups, live Outlook, and analytics views
+- the `/mail` workspace now includes inbox, accounts, follow-ups, live mail, and analytics views
 - organization activity analytics now support questions like "which clients were most active in the last 4 months?"
 
 Shared mailbox workflows are still incomplete and should be treated as in-progress. For Microsoft Graph, shared mailbox behavior depends on delegated mailbox access plus the correct `Shared` Graph permissions.
@@ -121,45 +122,43 @@ The persistent product target for this repo includes:
 The app currently supports multiple ways to get mail into the same intelligence layer:
 
 - Microsoft OAuth and Graph for first-party mailbox access
+- Apple Mail live access through Mail.app Automation on macOS
 - Outlook MCP auth-sidecar plus Graph-backed live browsing on localhost
 - Thunderbird MCP for local live mailbox access
 - Outlook archive import via `.olm`
 - targeted `.eml` import for recovery or testing
 
-The preferred architecture is still first-party Microsoft Graph when available. Outlook MCP is the most practical bridge when direct callback approval is blocked, while Thunderbird and archive import remain fallbacks.
+On macOS, Apple Mail is now the most practical zero-admin live source. First-party Microsoft Graph remains the cleanest long-term architecture when tenant approval is available, while Outlook MCP, Thunderbird, and archive import remain fallbacks.
 
-## Outlook MCP Live Source
+## Apple Mail Live Source
 
-The app now supports a local Outlook MCP route by using the `outlook-mcp` auth helper on `localhost:3333` and then reading Outlook mail through Graph with the saved token cache. This avoids scraping Outlook Web and keeps the `/mail` live workspace structured.
+The app now supports a local Apple Mail live route by reading Mail.app on this Mac through Automation. This avoids Azure consent and Outlook Web scraping while preserving the same `/mail` workspace structure.
 
 Local setup on this machine:
 
 ```bash
-git clone https://github.com/ryaker/outlook-mcp.git tools/outlook-mcp
-cd tools/outlook-mcp
-npm install
+git clone https://github.com/s-morgan-jeffries/apple-mail-mcp.git tools/apple-mail-mcp
+uv --directory tools/apple-mail-mcp sync --dev
 ```
 
-Azure app requirements for this route:
+Live-source requirements for this route:
 
-- redirect URI: `http://localhost:3333/auth/callback`
-- delegated permissions:
-  - `offline_access`
-  - `User.Read`
-  - `Mail.Read`
-  - `Mail.ReadWrite`
-  - `Mail.Read.Shared`
-  - `Mail.ReadWrite.Shared`
-  - `Mail.Send`
+- Mail.app configured with the mailbox already working locally
+- macOS Automation permission granted to the terminal or app running Smart Email Client
+- `APPLE_MAIL_TIMEOUT_SECONDS` optionally tuned in `.env` for slower mailboxes
 
-Run the auth helper with the same Microsoft credentials you keep in the repo `.env`:
+On first access, macOS may prompt for:
 
-```bash
-cd tools/outlook-mcp
-MS_CLIENT_ID=... MS_CLIENT_SECRET=... MS_TENANT_ID=... MS_SCOPES="offline_access User.Read Mail.Read Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send" npm run auth-server
-```
+- `System Settings` -> `Privacy & Security` -> `Automation`
+- allow your terminal or desktop app to control `Mail`
 
-Then open `/mail`, use `Connect Outlook MCP`, finish sign-in in the browser window, and refresh the live workspace.
+Then open `/mail` and use `Refresh live`. If Mail.app is open and syncing, the live workspace should populate without a separate sign-in helper.
+
+The upstream `apple-mail-mcp` repo is bundled locally in `tools/apple-mail-mcp`, but the app currently uses the in-repo Apple Mail adapter for live browse/read because it is more stable than the upstream mailbox listing/search output for this MVP slice.
+
+## Outlook MCP Live Source
+
+Outlook MCP remains available as a Graph-backed fallback when Mail.app is not a fit and direct Microsoft Graph callback approval is blocked.
 
 ## Thunderbird Live Source
 

@@ -10,6 +10,19 @@ export {
 } from "./analytics";
 export { applyThreadIntelligence, inferMailboxRole, rebuildIntelligence } from "./intelligence";
 export {
+  getAppleMailMessageDetail,
+  getAppleMailRecentMessages,
+  getAppleMailStatus,
+  listAppleMailAccounts,
+  listAppleMailFolders,
+  searchAppleMailMessages,
+  type AppleMailAccount,
+  type AppleMailFolder,
+  type AppleMailMessageDetail,
+  type AppleMailMessageSummary,
+  type AppleMailStatus
+} from "./apple-mail";
+export {
   getOutlookMcpAuthUrl,
   getOutlookMcpMessageDetail,
   getOutlookMcpRecentMessages,

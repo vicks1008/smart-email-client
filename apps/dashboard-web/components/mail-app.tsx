@@ -34,12 +34,12 @@ import { toast } from "sonner";
 import {
   addSharedMailbox,
   fetchAccounts,
+  fetchAppleMailAccounts as fetchThunderbirdAccounts,
+  fetchAppleMailFolders as fetchThunderbirdFolders,
+  fetchAppleMailMessage as fetchThunderbirdMessage,
+  fetchAppleMailRecentMessages as fetchThunderbirdRecentMessages,
+  fetchAppleMailStatus as fetchThunderbirdStatus,
   fetchImports,
-  fetchOutlookMcpAccounts as fetchThunderbirdAccounts,
-  fetchOutlookMcpFolders as fetchThunderbirdFolders,
-  fetchOutlookMcpMessage as fetchThunderbirdMessage,
-  fetchOutlookMcpRecentMessages as fetchThunderbirdRecentMessages,
-  fetchOutlookMcpStatus as fetchThunderbirdStatus,
   fetchThread,
   fetchThreads,
   fetchThunderbirdDiscoveredMailboxes,
@@ -47,19 +47,18 @@ import {
   fetchOrganizationActivity,
   fetchWorkbench,
   getMicrosoftConnectUrl,
-  getOutlookMcpConnectUrl,
   queueSync,
-  searchOutlookMcpMessages as searchThunderbirdMessages,
+  searchAppleMailMessages as searchThunderbirdMessages,
   syncAllThunderbirdMailboxes,
   syncThunderbirdMailbox,
   uploadArchive,
   type AccountSummary,
+  type AppleMailAccount as ThunderbirdAccount,
+  type AppleMailFolder as ThunderbirdFolder,
+  type AppleMailMessageDetail as ThunderbirdMessageDetail,
+  type AppleMailMessageSummary as ThunderbirdMessageSummary,
+  type AppleMailStatus as ThunderbirdStatus,
   type ImportJobSummary,
-  type OutlookMcpAccount as ThunderbirdAccount,
-  type OutlookMcpFolder as ThunderbirdFolder,
-  type OutlookMcpMessageDetail as ThunderbirdMessageDetail,
-  type OutlookMcpMessageSummary as ThunderbirdMessageSummary,
-  type OutlookMcpStatus as ThunderbirdStatus,
   type ThreadDetail,
   type ThreadSummary,
   type ThunderbirdDiscoveredMailbox,
@@ -104,6 +103,33 @@ function formatShortDate(value: string | null | undefined) {
 
 function formatCount(value: number) {
   return new Intl.NumberFormat(undefined).format(value);
+}
+
+function seedLiveMessageDetail(
+  message: ThunderbirdMessageSummary,
+  accountName: string | null,
+  folderType: string | null
+): ThunderbirdMessageDetail {
+  return {
+    ...message,
+    accountId: accountName,
+    accountName,
+    serverType: "apple-mail",
+    folderType,
+    messageKey: null,
+    threadId: null,
+    threadParent: null,
+    references: [],
+    inReplyTo: null,
+    size: null,
+    lineCount: null,
+    priority: null,
+    keywords: "",
+    charset: null,
+    body: "Loading message body...",
+    bodyIsHtml: false,
+    attachments: []
+  };
 }
 
 function activityTone(kind: OrganizationActivityItem["inferredKind"]) {
@@ -378,7 +404,7 @@ export function MailApp() {
       const status = await fetchThunderbirdStatus();
       setThunderbirdStatus(status);
 
-      if (status.authenticated) {
+      if (status.available) {
         const data = await fetchThunderbirdAccounts();
         setThunderbirdAccounts(data.accounts);
         await refreshThunderbirdDiscovery();
@@ -400,9 +426,9 @@ export function MailApp() {
         available: false,
         authenticated: false,
         authServerReachable: false,
-        bridgeUrl: "http://127.0.0.1:3333",
-        tokenStorePath: "",
-        error: error instanceof Error ? error.message : "Outlook MCP status check failed."
+        bridgeUrl: "Mail.app Automation",
+        accountCount: 0,
+        error: error instanceof Error ? error.message : "Apple Mail status check failed."
       });
     }
   }
@@ -415,14 +441,14 @@ export function MailApp() {
 
   async function refreshThunderbirdFolders(accountId: string) {
     try {
-      const data = await fetchThunderbirdFolders();
+      const data = await fetchThunderbirdFolders(accountId);
       setThunderbirdFolders(data.folders);
       setSelectedThunderbirdFolderPath((current) => {
         const retained = data.folders.find((folder) => folder.path === current)?.path;
         return retained ?? data.folders.find((folder) => folder.type === "inbox")?.path ?? data.folders[0]?.path ?? null;
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load Outlook folders.");
+      toast.error(error instanceof Error ? error.message : "Failed to load Apple Mail folders.");
     }
   }
 
@@ -430,16 +456,30 @@ export function MailApp() {
     try {
       const data =
         query && query.trim().length > 0
-          ? await searchThunderbirdMessages(query, folderPath)
-          : await fetchThunderbirdRecentMessages(folderPath);
+          ? await searchThunderbirdMessages(query, folderPath, selectedThunderbirdAccountId ?? undefined)
+          : await fetchThunderbirdRecentMessages(folderPath, selectedThunderbirdAccountId ?? undefined);
 
       setThunderbirdMessages(data.messages);
       setSelectedThunderbirdMessageId((current) => {
-        const retained = data.messages.find((message) => message.id === current)?.id;
-        return retained ?? data.messages[0]?.id ?? null;
+        const retained = data.messages.find((message) => message.id === current);
+        return retained?.id ?? data.messages[0]?.id ?? null;
+      });
+      setSelectedThunderbirdMessage((current) => {
+        const retained = data.messages.find((message) => message.id === current?.id);
+        const nextMessage = retained ?? data.messages[0] ?? null;
+        if (!nextMessage) {
+          return null;
+        }
+
+        if (current?.id === nextMessage.id && current.body && current.body !== "Loading message body...") {
+          return current;
+        }
+
+        const folderType = thunderbirdFolders.find((folder) => folder.path === nextMessage.folderPath)?.type ?? null;
+        return seedLiveMessageDetail(nextMessage, selectedThunderbirdAccount?.name ?? null, folderType);
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load Outlook messages.");
+      toast.error(error instanceof Error ? error.message : "Failed to load Apple Mail messages.");
     }
   }
 
@@ -451,7 +491,7 @@ export function MailApp() {
         attachments: data.message.attachments ?? []
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to load Outlook message.");
+      toast.error(error instanceof Error ? error.message : "Failed to load Apple Mail message.");
     }
   }
 
@@ -820,7 +860,7 @@ export function MailApp() {
         ? "Follow-ups"
       : workspaceView === "analytics"
         ? "Analytics"
-        : "Outlook MCP Live";
+        : "Apple Mail Live";
 
   const workspaceCopy =
     workspaceView === "inbox"
@@ -831,13 +871,13 @@ export function MailApp() {
         ? "Run the reminder queue without digging through raw inbox history."
       : workspaceView === "analytics"
         ? "Rank client activity over time and answer who has been busiest in a given window."
-      : "Browse Outlook live through the local MCP auth flow, then use imports and workbench intelligence alongside it.";
+      : "Browse Mail.app live on this Mac, then use imports and workbench intelligence alongside it.";
 
   const selectedImportSummary = imports[0] ?? null;
   const liveHeaderName =
     thunderbirdFolders.find((folder) => folder.path === selectedThunderbirdFolderPath)?.name ??
     selectedThunderbirdAccount?.name ??
-    "Outlook";
+    "Apple Mail";
   const draftTemplates = draftTemplatesForThread(selectedThread);
 
   return (
@@ -906,7 +946,7 @@ export function MailApp() {
                 className="client-search"
                 placeholder={
                   workspaceView === "live"
-                    ? "Search Outlook subject, sender, or recipient"
+                    ? "Search Apple Mail subject or sender"
                     : workspaceView === "analytics"
                       ? "Search client, domain, category, or kind"
                       : "Search subject, account, company, person, or follow-up"
@@ -932,15 +972,15 @@ export function MailApp() {
                   ))}
                 </div>
               ) : workspaceView === "live" ? (
-                thunderbirdStatus?.authenticated ? (
+                thunderbirdStatus?.available ? (
                   <button className="client-button secondary" onClick={() => void refreshThunderbirdStatus()}>
                     <RefreshCcw size={16} />
                     Refresh live
                   </button>
                 ) : (
-                  <button className="client-button primary" onClick={() => (window.location.href = getOutlookMcpConnectUrl())}>
-                    <MailPlus size={16} />
-                    Connect Outlook MCP
+                  <button className="client-button secondary" onClick={() => void refreshThunderbirdStatus()}>
+                    <RefreshCcw size={16} />
+                    Retry live
                   </button>
                 )
               ) : (
@@ -1182,12 +1222,16 @@ export function MailApp() {
                 <>
                   <div className="pane-header">
                     <div>
-                      <div className="eyebrow">Outlook MCP</div>
+                      <div className="eyebrow">Apple Mail</div>
                       <h3>{liveHeaderName}</h3>
                     </div>
-                    <div className={`status-tag ${thunderbirdStatus?.authenticated ? "active" : "warning"}`}>
-                      {thunderbirdStatus?.authenticated ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
-                      {thunderbirdStatus?.authenticated ? "Authenticated" : thunderbirdStatus?.authServerReachable ? "Needs sign-in" : "Offline"}
+                    <div className={`status-tag ${thunderbirdStatus?.available ? "active" : "warning"}`}>
+                      {thunderbirdStatus?.available ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
+                      {thunderbirdStatus?.available
+                        ? thunderbirdStatus?.authServerReachable
+                          ? "Ready"
+                          : "Mail.app ready"
+                        : "Needs setup"}
                     </div>
                   </div>
 
@@ -1224,6 +1268,11 @@ export function MailApp() {
                           key={`${message.folderPath}:${message.id}`}
                           className={`thread-row ${message.id === selectedThunderbirdMessageId ? "active" : ""}`}
                           onClick={() => {
+                            const folderType =
+                              thunderbirdFolders.find((folder) => folder.path === message.folderPath)?.type ?? null;
+                            setSelectedThunderbirdMessage(
+                              seedLiveMessageDetail(message, selectedThunderbirdAccount?.name ?? null, folderType)
+                            );
                             setSelectedThunderbirdFolderPath(message.folderPath);
                             setSelectedThunderbirdMessageId(message.id);
                           }}
@@ -1242,11 +1291,11 @@ export function MailApp() {
                       ))
                     ) : (
                       <div className="empty-state compact">
-                        {thunderbirdStatus?.authenticated
+                        {thunderbirdStatus?.available
                           ? "No live messages loaded yet."
                           : thunderbirdStatus?.authServerReachable
-                            ? "Connect Outlook MCP to load live messages."
-                            : "Outlook MCP auth server is not reachable on localhost."}
+                            ? "Mail.app is reachable, but the live workspace still needs local Automation access."
+                            : "Apple Mail live access is not ready yet on this Mac."}
                       </div>
                     )}
                   </div>
@@ -1355,7 +1404,7 @@ export function MailApp() {
                     </div>
                   </>
                 ) : (
-                  <div className="empty-state">Choose a live Outlook message to inspect it here.</div>
+                  <div className="empty-state">Choose a live Apple Mail message to inspect it here.</div>
                 )
               ) : workspaceView === "analytics" ? (
                 selectedActivityOrganization ? (
@@ -1628,7 +1677,7 @@ export function MailApp() {
                   <div className="pane-header">
                     <div>
                       <div className="eyebrow">Live metadata</div>
-                      <h3>Outlook details</h3>
+                      <h3>Apple Mail details</h3>
                     </div>
                     <PanelLeft size={18} />
                   </div>
@@ -1665,20 +1714,12 @@ export function MailApp() {
                 <details className="client-details" open={workspaceView === "live"}>
                   <summary>
                     <PlugZap size={16} />
-                    Connect Outlook MCP
+                    Apple Mail live source
                   </summary>
                   <div className="client-form">
                     <div className="subtle-line">
-                      Run the local auth helper on port 3333, sign in once, then refresh this workspace to load your live Outlook inbox.
+                      Smart Email Client reads live mail from Mail.app on this Mac. Make sure Mail.app is open and synced, then allow Automation access if macOS prompts for it.
                     </div>
-                    <button
-                      className="client-button primary"
-                      onClick={() => (window.location.href = getOutlookMcpConnectUrl())}
-                      type="button"
-                    >
-                      <MailPlus size={16} />
-                      Connect Outlook MCP
-                    </button>
                     <button
                       className="client-button secondary"
                       onClick={() => void refreshThunderbirdStatus()}
@@ -1771,12 +1812,18 @@ export function MailApp() {
                     <div className="eyebrow">Status</div>
                     <h3>System health</h3>
                   </div>
-                  {thunderbirdStatus?.authenticated ? <CheckCircle2 size={18} /> : <ShieldAlert size={18} />}
+                  {thunderbirdStatus?.available ? <CheckCircle2 size={18} /> : <ShieldAlert size={18} />}
                 </div>
                 <div className="metric-stack">
                   <div className="metric-row">
-                    <span>Outlook MCP</span>
-                    <strong>{thunderbirdStatus?.authenticated ? "authenticated" : thunderbirdStatus?.authServerReachable ? "auth ready" : "offline"}</strong>
+                    <span>Apple Mail</span>
+                    <strong>
+                      {thunderbirdStatus?.available
+                        ? thunderbirdStatus?.authServerReachable
+                          ? "ready"
+                          : "mail app only"
+                        : "offline"}
+                    </strong>
                   </div>
                   <div className="metric-row">
                     <span>Selected mailbox</span>
@@ -1787,7 +1834,7 @@ export function MailApp() {
                     <strong>{selectedImportSummary?.sourceFilename ?? "None"}</strong>
                   </div>
                 </div>
-                <div className="subtle-line">{thunderbirdStatus?.bridgeUrl ?? "http://127.0.0.1:3333"}</div>
+                <div className="subtle-line">{thunderbirdStatus?.bridgeUrl ?? "Mail.app Automation"}</div>
               </div>
 
               {thunderbirdSyncSources.length > 0 ? (

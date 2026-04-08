@@ -315,6 +315,75 @@ export type OutlookMcpMessageDetail = OutlookMcpMessageSummary & {
   }>;
 };
 
+export type AppleMailStatus = {
+  available: boolean;
+  authenticated: boolean;
+  authServerReachable: boolean;
+  bridgeUrl: string;
+  accountCount: number;
+  error?: string;
+  setupSteps?: string[];
+};
+
+export type AppleMailAccount = {
+  id: string;
+  name: string;
+  type: string;
+  identities: Array<{
+    id: string;
+    email: string;
+    name: string;
+    isDefault: boolean;
+  }>;
+};
+
+export type AppleMailFolder = {
+  name: string;
+  path: string;
+  type: string;
+  accountId: string;
+  totalMessages: number;
+  unreadMessages: number;
+  depth: number;
+};
+
+export type AppleMailMessageSummary = {
+  id: string;
+  subject: string;
+  author: string;
+  recipients: string;
+  ccList?: string;
+  date: string | null;
+  folder: string;
+  folderPath: string;
+  read: boolean;
+  flagged: boolean;
+};
+
+export type AppleMailMessageDetail = AppleMailMessageSummary & {
+  accountId: string | null;
+  accountName: string | null;
+  serverType: string | null;
+  folderType: string | null;
+  messageKey: number | null;
+  threadId: string | null;
+  threadParent: number | null;
+  references: string[];
+  inReplyTo: string | null;
+  size: number | null;
+  lineCount: number | null;
+  priority: string | null;
+  keywords: string;
+  charset: string | null;
+  body: string;
+  bodyIsHtml: boolean;
+  attachments: Array<{
+    name: string;
+    contentType: string;
+    size: number | null;
+  }>;
+};
+
 export type ThunderbirdStatus = {
   available: boolean;
   profilePaths: string[];
@@ -510,6 +579,64 @@ export async function fetchThunderbirdStatus() {
 
 export async function fetchOutlookMcpStatus() {
   return apiFetch<OutlookMcpStatus>("/v1/outlook-mcp/status");
+}
+
+export async function fetchAppleMailStatus() {
+  return apiFetch<AppleMailStatus>("/v1/apple-mail/status");
+}
+
+export async function fetchAppleMailAccounts() {
+  return apiFetch<{ accounts: AppleMailAccount[] }>("/v1/apple-mail/accounts");
+}
+
+export async function fetchAppleMailFolders(accountId?: string) {
+  const query = accountId ? `?accountId=${encodeURIComponent(accountId)}` : "";
+  return apiFetch<{ folders: AppleMailFolder[] }>(`/v1/apple-mail/folders${query}`);
+}
+
+export async function fetchAppleMailRecentMessages(folderPath?: string, accountId?: string) {
+  const params = new URLSearchParams({
+    maxResults: "60"
+  });
+
+  if (folderPath) {
+    params.set("folderPath", folderPath);
+  }
+
+  if (accountId) {
+    params.set("accountId", accountId);
+  }
+
+  return apiFetch<{ messages: AppleMailMessageSummary[] }>(`/v1/apple-mail/messages/recent?${params.toString()}`);
+}
+
+export async function fetchAppleMailMessage(messageId: string, folderPath?: string) {
+  const params = new URLSearchParams({
+    messageId
+  });
+
+  if (folderPath) {
+    params.set("folderPath", folderPath);
+  }
+
+  return apiFetch<{ message: AppleMailMessageDetail }>(`/v1/apple-mail/messages/detail?${params.toString()}`);
+}
+
+export async function searchAppleMailMessages(query: string, folderPath?: string, accountId?: string) {
+  const params = new URLSearchParams({
+    query,
+    maxResults: "60"
+  });
+
+  if (folderPath) {
+    params.set("folderPath", folderPath);
+  }
+
+  if (accountId) {
+    params.set("accountId", accountId);
+  }
+
+  return apiFetch<{ messages: AppleMailMessageSummary[] }>(`/v1/apple-mail/messages/search?${params.toString()}`);
 }
 
 export async function fetchOutlookMcpAccounts() {

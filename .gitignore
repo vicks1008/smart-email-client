@@ -12,3 +12,4 @@ coverage
 tools/olm-convert
 tools/outlook-mcp
 tools/thunderbird-mcp
+tools/apple-mail-mcp

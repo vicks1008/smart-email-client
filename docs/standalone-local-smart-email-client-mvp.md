@@ -3,7 +3,7 @@
 This project is scoped around these constraints:
 
 - standalone local app
-- Outlook / Office365 support
+- Apple Mail plus Outlook / Office365 support
 - shared mailbox visibility
 - zero required LLM API spend
 - deterministic analytics first
@@ -65,7 +65,7 @@ These requirements should remain explicit across future phases:
 Use a layered approach:
 
 1. `Mailbox layer`
-   Microsoft Graph, Thunderbird, and archive import
+   Apple Mail, Microsoft Graph, Thunderbird, and archive import
 2. `Deterministic intelligence layer`
    organizations, contacts, categories, reply-state, follow-up tasks, and activity analytics
 3. `Model layer`
@@ -139,6 +139,7 @@ The provider/model selector should be exposed in the product once the determinis
 The next decisions in this repo should preserve these principles:
 
 - do not regress into read-only mailbox tooling
+- keep Apple Mail viable as the zero-admin local live source on macOS
 - shared mailbox support remains first-class
 - deterministic analytics are the foundation for assistant behavior
 - model providers are layered on top of a trustworthy mailbox graph

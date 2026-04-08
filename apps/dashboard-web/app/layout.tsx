@@ -6,7 +6,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Smart Email Client",
-  description: "Local-first Outlook mailbox dashboard"
+  description: "Local-first AI email workspace for Mail.app, Outlook, and imported mail"
 };
 
 export default function RootLayout({
