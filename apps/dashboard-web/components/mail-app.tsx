@@ -1566,13 +1566,13 @@ export function MailApp() {
                         <div className="thread-reader-context">
                           <div className="avatar-badge reader-avatar">{liveSenderInitials}</div>
                           <div className="thread-reader-context-copy">
-                            <div className="eyebrow">Live message</div>
+                            <div className="eyebrow">Conversation</div>
                             <strong>{selectedThunderbirdMessage.author}</strong>
                             <span>{liveSenderDomain || selectedThunderbirdMessage.accountName || "Mail.app"}</span>
                           </div>
                         </div>
                         <h3 data-testid="reader-subject">{selectedThunderbirdMessage.subject || "(no subject)"}</h3>
-                        <p className="reader-copy">Browsing Mail.app live. Draft assistance stays available in the same pane.</p>
+                        <p className="reader-copy">Live message from Mail.app. Read and respond in the same canvas.</p>
                       </div>
                       <div className="reader-actions">
                         <button className="icon-button" type="button" aria-label="Reply">
@@ -1591,13 +1591,14 @@ export function MailApp() {
                     </div>
 
                     <div className="reader-pill-row">
+                      <span className="status-tag active">Apple Mail live</span>
                       <span className="soft-tag">{selectedThunderbirdMessage.folder}</span>
                       <span className="soft-tag">{selectedThunderbirdMessage.read ? "read" : "unread"}</span>
                       <span className="soft-tag">{selectedThunderbirdMessage.accountName ?? "Mail.app"}</span>
                     </div>
 
                     <div className="reader-card live-message-card reply-flow-card">
-                      <div className="message-card mail-message">
+                      <div className="message-card mail-message message-focus-card">
                         <div className="message-card-head">
                           <div>
                             <strong>{selectedThunderbirdMessage.author}</strong>
@@ -1644,7 +1645,7 @@ export function MailApp() {
                             />
                             <div className="composer-toolbar">
                               <div className="composer-meta">
-                                <span className="soft-tag">Live draft</span>
+                                <span className="soft-tag">Draft</span>
                               </div>
                               <div className="composer-actions">
                                 <button className="client-button tertiary" type="button">
