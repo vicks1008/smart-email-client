@@ -1676,9 +1676,17 @@ body {
   padding: 9px 12px;
 }
 
-.client-topbar.utility .topbar-copy .eyebrow,
-.client-topbar.utility .topbar-copy p {
-  display: none;
+.utility-copy {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.utility-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
 .topbar-copy h2 {
@@ -1697,6 +1705,10 @@ body {
 
 .topbar-meta-row {
   margin-top: 6px;
+}
+
+.topbar-hint {
+  padding-inline: 9px;
 }
 
 .client-search,
@@ -1742,6 +1754,12 @@ body {
 .pane-header {
   margin-bottom: 8px;
   padding: 0 2px 10px;
+}
+
+.pane-header-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .thread-list {
@@ -2200,14 +2218,10 @@ body {
   font-size: 0.84rem;
 }
 
-.client-app[data-workspace="inbox"] .topbar-copy .eyebrow,
-.client-app[data-workspace="live"] .topbar-copy .eyebrow {
-  font-size: 0.62rem;
-}
-
 .client-app[data-workspace="inbox"] .topbar-copy h2,
 .client-app[data-workspace="live"] .topbar-copy h2 {
-  font-size: 1rem;
+  font-size: 0.96rem;
+  margin: 0;
 }
 
 .client-app[data-workspace="inbox"] .reader-pane,

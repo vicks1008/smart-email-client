@@ -1059,12 +1059,21 @@ export function MailApp() {
 
         <section className="client-main">
           <header className={`client-topbar ${workspaceView === "inbox" || workspaceView === "live" ? "utility" : ""}`}>
-            <div className="topbar-copy">
-              <div className="eyebrow">Actionable workspace</div>
-              <h2>{workspaceTitle}</h2>
-              <p>{workspaceCopy}</p>
-              {topbarContextLabel ? <div className="topbar-meta-row"><span className="soft-tag">{topbarContextLabel}</span></div> : null}
-            </div>
+            {workspaceView === "inbox" || workspaceView === "live" ? (
+              <div className="topbar-copy utility-copy">
+                <div className="utility-title-row">
+                  <h2>{workspaceTitle}</h2>
+                  {topbarContextLabel ? <span className="soft-tag">{topbarContextLabel}</span> : null}
+                </div>
+              </div>
+            ) : (
+              <div className="topbar-copy">
+                <div className="eyebrow">Actionable workspace</div>
+                <h2>{workspaceTitle}</h2>
+                <p>{workspaceCopy}</p>
+                {topbarContextLabel ? <div className="topbar-meta-row"><span className="soft-tag">{topbarContextLabel}</span></div> : null}
+              </div>
+            )}
 
             <div className="topbar-tools">
               <input
@@ -1080,6 +1089,9 @@ export function MailApp() {
                 onChange={(event) => setSearch(event.target.value)}
                 data-testid="global-search"
               />
+              {(workspaceView === "inbox" || workspaceView === "live") && (
+                <span className="soft-tag topbar-hint">⌘K</span>
+              )}
               {workspaceView === "analytics" ? (
                 <div className="segmented-control analytics-range" data-testid="analytics-range-selector">
                   {([1, 4, 6] as const).map((months) => (
@@ -1181,7 +1193,7 @@ export function MailApp() {
                   <div className="pane-header">
                     <div>
                       <div className="eyebrow">Queue</div>
-                      <h3>Thread list</h3>
+                      <h3>{inboxThreads.length} threads</h3>
                     </div>
                     <div className="segmented-control" data-testid="queue-selector">
                       <button className={inboxQueue === "needsReply" ? "active" : ""} onClick={() => setInboxQueue("needsReply")}>
@@ -1382,13 +1394,16 @@ export function MailApp() {
                       <div className="eyebrow">Apple Mail</div>
                       <h3>{liveHeaderName}</h3>
                     </div>
-                    <div className={`status-tag ${thunderbirdStatus?.available ? "active" : "warning"}`}>
+                    <div className="pane-header-meta">
+                      <span className="soft-tag">{thunderbirdMessages.length} loaded</span>
+                      <div className={`status-tag ${thunderbirdStatus?.available ? "active" : "warning"}`}>
                       {thunderbirdStatus?.available ? <CheckCircle2 size={14} /> : <ShieldAlert size={14} />}
                       {thunderbirdStatus?.available
                         ? thunderbirdStatus?.authServerReachable
                           ? "Ready"
                           : "Mail.app ready"
                         : "Needs setup"}
+                      </div>
                     </div>
                   </div>
 
@@ -2039,32 +2054,25 @@ export function MailApp() {
                         </span>
                         <strong>{selectedThunderbirdMessage.folder}</strong>
                       </div>
-                    </div>
-                  </div>
-
-                  <div className="inspector-card profile-support-card">
-                    <div className="pane-header">
-                      <div>
-                        <div className="eyebrow">Live metadata</div>
-                        <h3>Apple Mail details</h3>
-                      </div>
-                      <PanelLeft size={18} />
-                    </div>
-                    <div className="metric-stack">
-                      <div className="metric-row">
-                        <span>Account</span>
+                      <div className="profile-detail-row">
+                        <span>
+                          <PanelLeft size={14} />
+                          Account
+                        </span>
                         <strong>{selectedThunderbirdMessage.accountName ?? "Unknown"}</strong>
                       </div>
-                      <div className="metric-row">
-                        <span>Thread ID</span>
-                        <strong>{selectedThunderbirdMessage.threadId ?? "None"}</strong>
-                      </div>
-                      <div className="metric-row">
-                        <span>Attachments</span>
+                      <div className="profile-detail-row">
+                        <span>
+                          <Archive size={14} />
+                          Attachments
+                        </span>
                         <strong>{selectedThunderbirdMessage.attachments.length}</strong>
                       </div>
-                      <div className="metric-row">
-                        <span>Priority</span>
+                      <div className="profile-detail-row">
+                        <span>
+                          <Clock3 size={14} />
+                          Priority
+                        </span>
                         <strong>{selectedThunderbirdMessage.priority ?? "normal"}</strong>
                       </div>
                     </div>
