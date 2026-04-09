@@ -1612,13 +1612,11 @@ export function MailApp() {
 
                     <div className="reader-card composer-card inline-composer-card">
                       <div className="composer-shell">
-                        <div className="composer-heading">
-                          <div className="eyebrow">Quick reply</div>
-                          <h3>Draft from the live message</h3>
-                        </div>
-                        <div className="composer-envelope">
-                          <span>To</span>
+                        <div className="composer-envelope compact">
+                          <span>Reply</span>
                           <strong>{selectedThunderbirdMessage.author}</strong>
+                          <span className="composer-divider" aria-hidden="true" />
+                          <span>{selectedThunderbirdMessage.accountName ?? "Mail.app"}</span>
                         </div>
                         <div className="template-row">
                           {liveReplySuggestions.map((label) => (
@@ -1636,12 +1634,11 @@ export function MailApp() {
                           className="draft-pad"
                           value={draftText}
                           onChange={(event) => setDraftText(event.target.value)}
-                          placeholder="Draft a reply..."
+                          placeholder="Write a reply..."
                         />
                         <div className="composer-toolbar">
                           <div className="composer-meta">
                             <span className="soft-tag">Live draft</span>
-                            <span className="soft-tag">{selectedThunderbirdMessage.author}</span>
                           </div>
                           <div className="composer-actions">
                             <button className="client-button tertiary" type="button">
@@ -1803,18 +1800,14 @@ export function MailApp() {
                     ))}
                   </div>
 
-                  <div className="reader-card composer-card inline-composer-card">
-                    <div className="composer-shell">
-                      <div className="composer-heading">
-                        <div className="eyebrow">Draft</div>
-                        <h3>Reply to {selectedPerson?.displayName ?? selectedPersonEmail ?? "contact"}</h3>
-                      </div>
-                      <div className="composer-envelope">
-                        <span>To</span>
-                        <strong>{selectedPerson?.displayName ?? selectedPersonEmail ?? "recipient"}</strong>
-                        <span>Cc</span>
-                        <strong>{selectedThread.mailbox.displayName}</strong>
-                      </div>
+                    <div className="reader-card composer-card inline-composer-card">
+                      <div className="composer-shell">
+                        <div className="composer-envelope compact">
+                          <span>Reply</span>
+                          <strong>{selectedPerson?.displayName ?? selectedPersonEmail ?? "recipient"}</strong>
+                          <span className="composer-divider" aria-hidden="true" />
+                          <span>{selectedThread.mailbox.displayName}</span>
+                        </div>
                       <div className="template-row">
                         {draftTemplates.map((template) => (
                           <button
@@ -1831,12 +1824,12 @@ export function MailApp() {
                         className="draft-pad"
                         value={draftText}
                         onChange={(event) => setDraftText(event.target.value)}
+                        placeholder="Write a reply..."
                         data-testid="draft-pad"
                       />
                       <div className="composer-toolbar">
                         <div className="composer-meta">
-                          <span className="soft-tag">To {selectedPerson?.displayName ?? selectedPersonEmail ?? "recipient"}</span>
-                          <span className="soft-tag">{selectedThread.mailbox.displayName}</span>
+                          <span className="soft-tag">Draft</span>
                         </div>
                         <div className="composer-actions">
                           <button className="client-button tertiary" onClick={() => void copyDraft()} type="button">

@@ -2044,6 +2044,13 @@ body {
   border-bottom: 1px solid rgba(130, 108, 86, 0.08);
 }
 
+.composer-envelope.compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
 .composer-envelope span {
   color: var(--muted);
   font-size: 0.78rem;
@@ -2054,6 +2061,12 @@ body {
   font-size: 0.84rem;
   font-weight: 600;
   color: #4f4339;
+}
+
+.composer-divider {
+  width: 1px;
+  height: 14px;
+  background: rgba(130, 108, 86, 0.16);
 }
 
 .template-row {
@@ -2086,6 +2099,14 @@ body {
 .composer-toolbar {
   padding-top: 10px;
   border-top: 1px solid rgba(130, 108, 86, 0.08);
+}
+
+.inline-composer-card .template-row {
+  padding-top: 2px;
+}
+
+.inline-composer-card .draft-pad {
+  min-height: 132px;
 }
 
 .composer-meta,
