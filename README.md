@@ -98,6 +98,9 @@ The app is currently in an early Phase 2 state:
 - archive import remains available for `.olm` and `.eml`
 - the `/mail` workspace now includes inbox, accounts, follow-ups, live mail, and analytics views
 - organization activity analytics now support questions like "which clients were most active in the last 4 months?"
+- the app shell now includes first-class routed `Settings` pages for `Models`, `Accounts`, and `Workflows`
+- settings now persist through the local API and database so model routing is product state instead of hidden config
+- `/mail` now turns core keyboard cues into real actions for search focus, left-pane movement, composer focus, and escape-to-reset behavior
 
 Shared mailbox workflows are still incomplete and should be treated as in-progress. For Microsoft Graph, shared mailbox behavior depends on delegated mailbox access plus the correct `Shared` Graph permissions.
 

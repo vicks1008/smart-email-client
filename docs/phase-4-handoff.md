@@ -90,6 +90,7 @@ The current `/mail` work has already been moving toward:
 - a latest-message-first reader hierarchy
 - an inline reply surface
 - lighter command-style action cues
+- real keyboard navigation for search, left-pane movement, and composer focus
 
 The next likely UI moves are:
 
@@ -97,16 +98,24 @@ The next likely UI moves are:
 2. tighten remaining pill/tag usage
 3. improve motion and transition feel for active rows and reply actions
 4. add more keyboard-first affordances without making the UI noisy
-5. add `Settings` as a first-class area in the app shell
+5. connect saved model routing into more assistant surfaces
+
+## Implemented In This Slice
+
+- `Settings` now exists as a first-class area in the app shell
+- `/settings/models`, `/settings/accounts`, and `/settings/workflows` now exist as routed pages
+- settings now persist through the local API and database
+- `Settings -> Models` now includes `Model source for enrichment`
+- `Local provider`, `Cloud API token`, and `OAuth-connected assistant` categories are now supported
+- deterministic analytics remain explicitly separate from selected model routing
+- `/mail` now turns shortcut hints into real keyboard actions for search, list movement, composer focus, and escape-to-reset behavior
 
 ## Suggested next implementation order
 
-1. add `Settings` navigation entry
-2. scaffold `/settings/models`, `/settings/accounts`, and `/settings/workflows`
-3. implement `Model source for enrichment` UI and persistence
-4. define provider config schema for local, API-token, and OAuth sources
-5. continue the Superhuman-style refinement of `/mail`
-6. connect model routing to enrichment and drafting flows
+1. continue the Superhuman-style refinement of `/mail`
+2. connect model routing to enrichment and drafting flows
+3. begin surfacing saved settings inside assistant and reply experiences
+4. deepen shared mailbox controls inside `Settings -> Accounts`
 
 ## Copyable next-chat prompt
 

@@ -210,3 +210,14 @@ The next decisions in this repo should preserve these principles:
 - shared mailbox support remains first-class
 - deterministic analytics are the foundation for assistant behavior
 - model providers are layered on top of a trustworthy mailbox graph
+
+## Phase 4 Progress
+
+The current implementation now includes:
+
+- a first-class routed `Settings` surface at `/settings/models`, `/settings/accounts`, and `/settings/workflows`
+- persisted app settings through the local API and database
+- `Settings -> Models` with a `Model source for enrichment` field
+- model-source categories for `Local provider`, `Cloud API token`, and `OAuth-connected assistant`
+- explicit `DETERMINISTIC_ONLY` handling for analytics so model routing does not affect mailbox intelligence
+- initial keyboard-first `/mail` shortcuts for search focus, list movement, composer focus, and escape-to-reset behavior

@@ -516,6 +516,61 @@ export type ThunderbirdSyncSource = {
   };
 };
 
+export type ModelSourceCategory = "LOCAL_PROVIDER" | "CLOUD_API_TOKEN" | "OAUTH_CONNECTED_ASSISTANT";
+export type RoutingMode = "AUTO" | "EXPLICIT";
+export type OAuthConnectionStatus = "NOT_CONNECTED" | "CONNECTED" | "COMING_SOON";
+
+export type ModelsSettings = {
+  enrichmentSource: {
+    category: ModelSourceCategory;
+    providerId: string;
+    baseUrl: string | null;
+    defaultModel: string;
+    routingMode: RoutingMode;
+    apiToken: string;
+    apiTokenPreview?: string | null;
+    hasApiToken?: boolean;
+    oauthStatus: OAuthConnectionStatus;
+    oauthAccountLabel: string | null;
+  };
+  analyticsMode: "DETERMINISTIC_ONLY";
+};
+
+export type AccountsSettings = {
+  preferredLiveSource: "APPLE_MAIL" | "MICROSOFT_GRAPH" | "OUTLOOK_MCP" | "THUNDERBIRD";
+  includeSharedMailboxesInQueues: boolean;
+  prioritizeSharedMailboxes: boolean;
+  defaultSyncWindowDays: number;
+};
+
+export type WorkflowsSettings = {
+  replyQueueDefault: "needsReply" | "waitingOnThem" | "allThreads";
+  followUpSlaHours: number;
+  stackToasts: boolean;
+  keyboardHints: boolean;
+};
+
+export type SettingsPayload = {
+  models: ModelsSettings;
+  accounts: AccountsSettings;
+  workflows: WorkflowsSettings;
+};
+
+export type ModelProvider = {
+  id: string;
+  name: string;
+  category: ModelSourceCategory;
+  defaultBaseUrl: string | null;
+  supportsBaseUrl: boolean;
+  supportsApiToken: boolean;
+  supportsOAuth: boolean;
+  oauthStatus?: OAuthConnectionStatus;
+};
+
+export type ModelProviderCatalog = {
+  providers: ModelProvider[];
+};
+
 async function apiFetch<T>(path: string, init?: RequestInit) {
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
@@ -781,9 +836,107 @@ export async function fetchImports(mailboxId?: string, accountId?: string) {
   return apiFetch<{ imports: ImportJobSummary[] }>(`/v1/imports${query ? `?${query}` : ""}`);
 }
 
+function normalizeModelsSettings(settings: Omit<ModelsSettings, "enrichmentSource"> & {
+  enrichmentSource: Omit<ModelsSettings["enrichmentSource"], "apiToken" | "oauthStatus" | "oauthAccountLabel"> & {
+    apiTokenPreview?: string | null;
+    hasApiToken?: boolean;
+    oauthStatus?: OAuthConnectionStatus;
+    oauthAccountLabel?: string | null;
+  };
+}) {
+  return {
+    ...settings,
+    enrichmentSource: {
+      ...settings.enrichmentSource,
+      apiToken: "",
+      oauthStatus: settings.enrichmentSource.oauthStatus ?? "NOT_CONNECTED",
+      oauthAccountLabel: settings.enrichmentSource.oauthAccountLabel ?? null
+    }
+  } satisfies ModelsSettings;
+}
+
+function normalizeSettingsPayload(payload: {
+  settings: {
+    models: Omit<ModelsSettings, "enrichmentSource"> & {
+      enrichmentSource: Omit<ModelsSettings["enrichmentSource"], "apiToken" | "oauthStatus" | "oauthAccountLabel"> & {
+        apiTokenPreview?: string | null;
+        hasApiToken?: boolean;
+        oauthStatus?: OAuthConnectionStatus;
+        oauthAccountLabel?: string | null;
+      };
+    };
+    accounts: AccountsSettings;
+    workflows: WorkflowsSettings;
+  };
+}) {
+  return {
+    settings: {
+      ...payload.settings,
+      models: normalizeModelsSettings(payload.settings.models)
+    }
+  };
+}
+
 export async function queueSync(accountId: string) {
   return apiFetch<{ queued: number }>(`/v1/mail/accounts/${accountId}/sync`, {
     method: "POST"
+  });
+}
+
+export async function fetchSettings() {
+  const payload = await apiFetch<{
+    settings: {
+      models: Omit<ModelsSettings, "enrichmentSource"> & {
+        enrichmentSource: Omit<ModelsSettings["enrichmentSource"], "apiToken" | "oauthStatus" | "oauthAccountLabel"> & {
+          apiTokenPreview?: string | null;
+          hasApiToken?: boolean;
+          oauthStatus?: OAuthConnectionStatus;
+          oauthAccountLabel?: string | null;
+        };
+      };
+      accounts: AccountsSettings;
+      workflows: WorkflowsSettings;
+    };
+  }>("/v1/settings");
+
+  return normalizeSettingsPayload(payload);
+}
+
+export async function fetchModelProviderCatalog() {
+  return apiFetch<ModelProviderCatalog>("/v1/model-providers");
+}
+
+export async function updateModelsSettings(settings: ModelsSettings) {
+  const payload = await apiFetch<{
+    settings: Omit<ModelsSettings, "enrichmentSource"> & {
+      enrichmentSource: Omit<ModelsSettings["enrichmentSource"], "apiToken" | "oauthStatus" | "oauthAccountLabel"> & {
+        apiTokenPreview?: string | null;
+        hasApiToken?: boolean;
+        oauthStatus?: OAuthConnectionStatus;
+        oauthAccountLabel?: string | null;
+      };
+    };
+  }>("/v1/settings/models", {
+    method: "PUT",
+    body: JSON.stringify({ settings })
+  });
+
+  return {
+    settings: normalizeModelsSettings(payload.settings)
+  };
+}
+
+export async function updateAccountsSettings(settings: AccountsSettings) {
+  return apiFetch<{ settings: AccountsSettings }>("/v1/settings/accounts", {
+    method: "PUT",
+    body: JSON.stringify({ settings })
+  });
+}
+
+export async function updateWorkflowsSettings(settings: WorkflowsSettings) {
+  return apiFetch<{ settings: WorkflowsSettings }>("/v1/settings/workflows", {
+    method: "PUT",
+    body: JSON.stringify({ settings })
   });
 }
 

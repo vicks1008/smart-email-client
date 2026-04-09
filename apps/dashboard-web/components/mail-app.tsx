@@ -24,7 +24,6 @@ import {
   ReplyAll,
   SendHorizontal,
   ShieldAlert,
-  Sparkles,
   Upload,
   Users
 } from "lucide-react";
@@ -33,6 +32,7 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useTransition,
   type FormEvent
@@ -75,6 +75,7 @@ import {
   type OrganizationActivityReport,
   type WorkbenchData
 } from "../lib/api";
+import { AppShell } from "./app-shell";
 
 type WorkspaceView = "inbox" | "accounts" | "followups" | "analytics" | "live";
 type InboxQueue = "needsReply" | "waitingOnThem" | "allThreads";
@@ -338,6 +339,20 @@ function threadMatchesQuery(thread: ThreadSummary, normalizedQuery: string) {
   return haystack.includes(normalizedQuery);
 }
 
+function isEditableElement(target: EventTarget | null) {
+  const element = target instanceof HTMLElement ? target : null;
+  if (!element) {
+    return false;
+  }
+
+  return (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element.isContentEditable ||
+    Boolean(element.closest("[contenteditable='true']"))
+  );
+}
+
 export function MailApp() {
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("inbox");
   const [inboxQueue, setInboxQueue] = useState<InboxQueue>("needsReply");
@@ -382,6 +397,8 @@ export function MailApp() {
   const [isImportPending, startImportTransition] = useTransition();
   const [isThunderbirdImportPending, startThunderbirdImportTransition] = useTransition();
   const [isThunderbirdBulkImportPending, startThunderbirdBulkImportTransition] = useTransition();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const draftPadRef = useRef<HTMLTextAreaElement>(null);
 
   const deferredSearch = useDeferredValue(search);
 
@@ -577,6 +594,34 @@ export function MailApp() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load Apple Mail message.");
     }
+  }
+
+  function selectLiveMessage(message: ThunderbirdMessageSummary) {
+    const folderType = thunderbirdFolders.find((folder) => folder.path === message.folderPath)?.type ?? null;
+    setSelectedThunderbirdMessage(seedLiveMessageDetail(message, selectedThunderbirdAccount?.name ?? null, folderType));
+    setSelectedThunderbirdFolderPath(message.folderPath);
+    setSelectedThunderbirdMessageId(message.id);
+  }
+
+  function focusSearch() {
+    const input = searchInputRef.current;
+    if (!input) {
+      return;
+    }
+
+    input.focus();
+    input.select();
+  }
+
+  function focusComposer() {
+    const composer = draftPadRef.current;
+    if (!composer) {
+      return;
+    }
+
+    composer.focus();
+    const end = composer.value.length;
+    composer.setSelectionRange(end, end);
   }
 
   async function refreshArchiveAccounts() {
@@ -902,6 +947,76 @@ export function MailApp() {
     return allArchiveThreads.filter((thread) => thread.primaryOrganization?.id === selectedOrganization.id);
   }, [allArchiveThreads, selectedOrganization]);
 
+  const activeLeftPaneRows = useMemo(() => {
+    switch (workspaceView) {
+      case "accounts":
+        return filteredOrganizations.map((organization) => organization.id);
+      case "analytics":
+        return filteredActivityOrganizations.map((organization) => organization.organizationId);
+      case "followups":
+        return filteredFollowUps.map((task) => task.thread.id);
+      case "live":
+        return thunderbirdMessages.map((message) => message.id);
+      case "inbox":
+      default:
+        return inboxThreads.map((thread) => thread.id);
+    }
+  }, [
+    filteredActivityOrganizations,
+    filteredFollowUps,
+    filteredOrganizations,
+    inboxThreads,
+    thunderbirdMessages,
+    workspaceView
+  ]);
+
+  const activeLeftPaneSelection =
+    workspaceView === "accounts"
+      ? selectedOrganization?.id ?? null
+      : workspaceView === "analytics"
+        ? selectedActivityOrganization?.organizationId ?? null
+        : workspaceView === "live"
+          ? selectedThunderbirdMessageId
+          : selectedThreadId;
+
+  function moveLeftPaneSelection(delta: number) {
+    if (!activeLeftPaneRows.length) {
+      return;
+    }
+
+    const currentIndex = activeLeftPaneSelection ? activeLeftPaneRows.indexOf(activeLeftPaneSelection) : -1;
+    const fallbackIndex = delta > 0 ? 0 : activeLeftPaneRows.length - 1;
+    const nextIndex =
+      currentIndex === -1 ? fallbackIndex : Math.min(Math.max(currentIndex + delta, 0), activeLeftPaneRows.length - 1);
+    const nextId = activeLeftPaneRows[nextIndex];
+
+    if (!nextId) {
+      return;
+    }
+
+    if (workspaceView === "accounts") {
+      setSelectedOrganizationId(nextId);
+      return;
+    }
+
+    if (workspaceView === "analytics") {
+      setSelectedActivityOrganizationId(nextId);
+      return;
+    }
+
+    if (workspaceView === "live") {
+      const nextMessage = thunderbirdMessages.find((message) => message.id === nextId);
+      if (nextMessage) {
+        selectLiveMessage(nextMessage);
+      }
+      return;
+    }
+
+    setSelectedThreadId(nextId);
+  }
+
+  const canFocusComposer = workspaceView === "live" ? Boolean(selectedThunderbirdMessage) : workspaceView !== "analytics" && Boolean(selectedThread);
+
   useEffect(() => {
     if (workspaceView === "live") {
       return;
@@ -940,6 +1055,58 @@ export function MailApp() {
       setInboxQueue("allThreads");
     }
   }, [allArchiveThreads.length, filteredNeedsReply.length, inboxQueue, workspaceView]);
+
+  useEffect(() => {
+    if (!activeLeftPaneSelection) {
+      return;
+    }
+
+    const row = document.querySelector<HTMLElement>(`[data-row-id="${activeLeftPaneSelection}"]`);
+    row?.scrollIntoView({
+      block: "nearest"
+    });
+  }, [activeLeftPaneSelection]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        focusSearch();
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
+          document.activeElement.blur();
+          return;
+        }
+      }
+
+      if (isEditableElement(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      if (event.key === "j" || event.key === "ArrowDown") {
+        event.preventDefault();
+        moveLeftPaneSelection(1);
+        return;
+      }
+
+      if (event.key === "k" || event.key === "ArrowUp") {
+        event.preventDefault();
+        moveLeftPaneSelection(-1);
+        return;
+      }
+
+      if ((event.key === "Enter" || event.key.toLowerCase() === "r") && canFocusComposer) {
+        event.preventDefault();
+        focusComposer();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeLeftPaneRows, activeLeftPaneSelection, canFocusComposer, workspaceView, thunderbirdMessages]);
 
   const workspaceTitle =
     workspaceView === "inbox"
@@ -1005,59 +1172,58 @@ export function MailApp() {
         : null;
 
   return (
-    <main className="client-shell">
-      <div className="client-app" data-workspace={workspaceView}>
-        <aside className="client-nav" data-testid="client-nav">
-          <div className="nav-brand">
-            <div className="nav-mark">
-              <Sparkles size={18} />
-            </div>
-            <div>
-              <div className="eyebrow">AI email client</div>
-              <h1>Smart Mail</h1>
-            </div>
-          </div>
-
-          <div className="nav-group">
-            <button className={`nav-button ${workspaceView === "inbox" ? "active" : ""}`} onClick={() => setWorkspaceView("inbox")} data-testid="workspace-nav-inbox">
-              <Inbox size={18} />
-              <span>Inbox</span>
-            </button>
-            <button className={`nav-button ${workspaceView === "accounts" ? "active" : ""}`} onClick={() => setWorkspaceView("accounts")} data-testid="workspace-nav-accounts">
-              <Building2 size={18} />
-              <span>Accounts</span>
-            </button>
-            <button className={`nav-button ${workspaceView === "followups" ? "active" : ""}`} onClick={() => setWorkspaceView("followups")} data-testid="workspace-nav-followups">
-              <Clock3 size={18} />
-              <span>Follow-ups</span>
-            </button>
-            <button className={`nav-button ${workspaceView === "analytics" ? "active" : ""}`} onClick={() => setWorkspaceView("analytics")} data-testid="workspace-nav-analytics">
-              <BrainCircuit size={18} />
-              <span>Analytics</span>
-            </button>
-            <button className={`nav-button ${workspaceView === "live" ? "active" : ""}`} onClick={() => setWorkspaceView("live")} data-testid="workspace-nav-live">
-              <PlugZap size={18} />
-              <span>Live</span>
-            </button>
-          </div>
-
-          <div className="nav-stats">
-            <div className="nav-stat">
-              <span>Needs reply</span>
-              <strong>{workbench?.summary.needsReply ?? 0}</strong>
-            </div>
-            <div className="nav-stat">
-              <span>Waiting</span>
-              <strong>{workbench?.summary.waitingOnThem ?? 0}</strong>
-            </div>
-            <div className="nav-stat">
-              <span>Due today</span>
-              <strong>{workbench?.summary.followUpToday ?? 0}</strong>
-            </div>
-          </div>
-        </aside>
-
-        <section className="client-main">
+    <AppShell
+      workspaceKey={workspaceView}
+      secondaryLabel="Workspace"
+      secondaryItems={[
+        {
+          label: "Inbox",
+          icon: Inbox,
+          active: workspaceView === "inbox",
+          onSelect: () => setWorkspaceView("inbox"),
+          badge: workbench?.summary.needsReply ?? 0
+        },
+        {
+          label: "Accounts",
+          icon: Building2,
+          active: workspaceView === "accounts",
+          onSelect: () => setWorkspaceView("accounts")
+        },
+        {
+          label: "Follow-ups",
+          icon: Clock3,
+          active: workspaceView === "followups",
+          onSelect: () => setWorkspaceView("followups"),
+          badge: workbench?.summary.followUpToday ?? 0
+        },
+        {
+          label: "Analytics",
+          icon: BrainCircuit,
+          active: workspaceView === "analytics",
+          onSelect: () => setWorkspaceView("analytics")
+        },
+        {
+          label: "Live",
+          icon: PlugZap,
+          active: workspaceView === "live",
+          onSelect: () => setWorkspaceView("live")
+        }
+      ]}
+      stats={[
+        {
+          label: "Needs reply",
+          value: workbench?.summary.needsReply ?? 0
+        },
+        {
+          label: "Waiting",
+          value: workbench?.summary.waitingOnThem ?? 0
+        },
+        {
+          label: "Due today",
+          value: workbench?.summary.followUpToday ?? 0
+        }
+      ]}
+    >
           <header className={`client-topbar ${workspaceView === "inbox" || workspaceView === "live" ? "utility" : ""}`}>
             {workspaceView === "inbox" || workspaceView === "live" ? (
               <div className="topbar-copy utility-copy">
@@ -1078,6 +1244,7 @@ export function MailApp() {
             <div className="topbar-tools">
               <input
                 className="client-search"
+                ref={searchInputRef}
                 placeholder={
                   workspaceView === "live"
                     ? "Search Apple Mail subject or sender"
@@ -1216,6 +1383,7 @@ export function MailApp() {
                           key={thread.id}
                           className={`thread-row ${thread.id === selectedThreadId ? "active" : ""}`}
                           onClick={() => setSelectedThreadId(thread.id)}
+                          data-row-id={thread.id}
                           data-testid={`thread-row-${thread.id}`}
                         >
                           <div className="thread-row-top">
@@ -1268,6 +1436,7 @@ export function MailApp() {
                           key={task.id}
                           className={`thread-row ${task.thread.id === selectedThreadId ? "active" : ""}`}
                           onClick={() => setSelectedThreadId(task.thread.id)}
+                          data-row-id={task.thread.id}
                           data-testid={`followup-row-${task.id}`}
                         >
                           <div className="thread-row-top">
@@ -1314,6 +1483,7 @@ export function MailApp() {
                           key={organization.id}
                           className={`thread-row ${organization.id === selectedOrganization?.id ? "active" : ""}`}
                           onClick={() => setSelectedOrganizationId(organization.id)}
+                          data-row-id={organization.id}
                           data-testid={`organization-row-${organization.id}`}
                         >
                           <div className="thread-row-top">
@@ -1357,6 +1527,7 @@ export function MailApp() {
                           key={organization.organizationId}
                           className={`thread-row ${organization.organizationId === selectedActivityOrganization?.organizationId ? "active" : ""}`}
                           onClick={() => setSelectedActivityOrganizationId(organization.organizationId)}
+                          data-row-id={organization.organizationId}
                           data-testid={`activity-row-${organization.organizationId}`}
                         >
                           <div className="thread-row-top">
@@ -1441,15 +1612,8 @@ export function MailApp() {
                         <button
                           key={`${message.folderPath}:${message.id}`}
                           className={`thread-row ${message.id === selectedThunderbirdMessageId ? "active" : ""}`}
-                          onClick={() => {
-                            const folderType =
-                              thunderbirdFolders.find((folder) => folder.path === message.folderPath)?.type ?? null;
-                            setSelectedThunderbirdMessage(
-                              seedLiveMessageDetail(message, selectedThunderbirdAccount?.name ?? null, folderType)
-                            );
-                            setSelectedThunderbirdFolderPath(message.folderPath);
-                            setSelectedThunderbirdMessageId(message.id);
-                          }}
+                          onClick={() => selectLiveMessage(message)}
+                          data-row-id={message.id}
                         >
                           <div className="thread-row-top">
                           <div className="thread-row-identity">
@@ -1640,6 +1804,7 @@ export function MailApp() {
                             </div>
                             <textarea
                               className="draft-pad"
+                              ref={draftPadRef}
                               value={draftText}
                               onChange={(event) => setDraftText(event.target.value)}
                               placeholder="Write a reply..."
@@ -1839,6 +2004,7 @@ export function MailApp() {
                           </div>
                           <textarea
                             className="draft-pad"
+                            ref={draftPadRef}
                             value={draftText}
                             onChange={(event) => setDraftText(event.target.value)}
                             placeholder="Write a reply..."
@@ -2256,8 +2422,6 @@ export function MailApp() {
               ) : null}
             </aside> : null}
           </div>
-        </section>
-      </div>
-    </main>
+    </AppShell>
   );
 }
