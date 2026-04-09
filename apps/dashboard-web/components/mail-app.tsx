@@ -1563,7 +1563,14 @@ export function MailApp() {
                   <>
                     <div className="thread-reader-header">
                       <div className="thread-reader-title">
-                        <div className="eyebrow">Live message</div>
+                        <div className="thread-reader-context">
+                          <div className="avatar-badge reader-avatar">{liveSenderInitials}</div>
+                          <div className="thread-reader-context-copy">
+                            <div className="eyebrow">Live message</div>
+                            <strong>{selectedThunderbirdMessage.author}</strong>
+                            <span>{liveSenderDomain || selectedThunderbirdMessage.accountName || "Mail.app"}</span>
+                          </div>
+                        </div>
                         <h3 data-testid="reader-subject">{selectedThunderbirdMessage.subject || "(no subject)"}</h3>
                         <p className="reader-copy">Browsing Mail.app live. Draft assistance stays available in the same pane.</p>
                       </div>
@@ -1726,7 +1733,14 @@ export function MailApp() {
                 <>
                   <div className="thread-reader-header">
                     <div className="thread-reader-title">
-                      <div className="eyebrow">Conversation</div>
+                      <div className="thread-reader-context">
+                        <div className="avatar-badge reader-avatar">{selectedPersonInitials}</div>
+                        <div className="thread-reader-context-copy">
+                          <div className="eyebrow">Conversation</div>
+                          <strong>{selectedPerson?.displayName ?? selectedThreadOrganization?.name ?? "Selected thread"}</strong>
+                          <span>{selectedThreadDomain || selectedThread.mailbox.displayName}</span>
+                        </div>
+                      </div>
                       <h3 data-testid="reader-subject">{selectedThread.subject}</h3>
                       <p className="reader-copy">{selectedThread.replyState?.reason ?? "No reply-state rationale yet."}</p>
                     </div>
