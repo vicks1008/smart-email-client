@@ -987,6 +987,8 @@ export function MailApp() {
   const liveSenderInitials = initials(selectedThunderbirdMessage?.author ?? selectedThunderbirdMessage?.subject ?? "Mail");
   const archiveReplySuggestions = ["You got it", "Looks good", "Following up"];
   const liveReplySuggestions = ["You too!", "Looking forward", "Sure thing"];
+  const latestThreadMessage = selectedThread?.messages.at(-1) ?? null;
+  const earlierThreadMessages = selectedThread?.messages.slice(0, -1) ?? [];
   const showInspectorPane =
     workspaceView === "accounts" ||
     workspaceView === "analytics" ||
@@ -1592,7 +1594,7 @@ export function MailApp() {
                       ))}
                     </div>
 
-                    <div className="reader-card composer-card">
+                    <div className="reader-card composer-card inline-composer-card">
                       <div className="composer-shell">
                         <div className="composer-heading">
                           <div className="eyebrow">Quick reply</div>
@@ -1733,8 +1735,8 @@ export function MailApp() {
 
                   <div className="reader-pill-row">
                     <span className={`status-tag ${replyTone(selectedThread.replyState)}`}>{replyLabel(selectedThread.replyState)}</span>
-                    {selectedThread.messages.at(-1)?.category ? (
-                      <span className="soft-tag">{categoryLabel(selectedThread.messages.at(-1)?.category ?? null)}</span>
+                    {latestThreadMessage?.category ? (
+                      <span className="soft-tag">{categoryLabel(latestThreadMessage.category ?? null)}</span>
                     ) : null}
                     <span className="soft-tag">{selectedThread.mailbox.displayName}</span>
                     {selectedThread.replyState?.replyDueAt ? (
@@ -1743,23 +1745,38 @@ export function MailApp() {
                   </div>
 
                   <div className="reader-card conversation-card">
-                    <div className="message-stack conversation-stack">
-                      {selectedThread.messages.map((message, index) => (
-                        <article key={message.id} className="message-card mail-message" data-testid={`message-${message.id}`}>
-                          <div className="message-card-head">
-                            <div>
+                    {earlierThreadMessages.length ? (
+                      <div className="thread-history-list">
+                        {earlierThreadMessages.map((message) => (
+                          <article key={message.id} className="thread-history-item" data-testid={`message-${message.id}`}>
+                            <div className="thread-history-head">
                               <strong>{message.fromName ?? message.fromAddress ?? "Unknown sender"}</strong>
-                              <div className="subtle-line">{message.fromAddress ?? "No sender address"}</div>
+                              <span>{formatDate(message.receivedAt)}</span>
                             </div>
-                            <div className="message-meta-group">
-                              <span className="soft-tag">{index === selectedThread.messages.length - 1 ? "Latest" : "Earlier"}</span>
-                              <span className="soft-tag">{formatDate(message.receivedAt)}</span>
-                            </div>
+                            <p>{message.bodyPreview || message.bodyText || "(empty message)"}</p>
+                          </article>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {latestThreadMessage ? (
+                      <article
+                        key={latestThreadMessage.id}
+                        className="message-card mail-message message-focus-card"
+                        data-testid={`message-${latestThreadMessage.id}`}
+                      >
+                        <div className="message-card-head">
+                          <div>
+                            <strong>{latestThreadMessage.fromName ?? latestThreadMessage.fromAddress ?? "Unknown sender"}</strong>
+                            <div className="subtle-line">{latestThreadMessage.fromAddress ?? "No sender address"}</div>
                           </div>
-                          <p>{message.bodyText || message.bodyPreview || "(empty message)"}</p>
-                        </article>
-                      ))}
-                    </div>
+                          <div className="message-meta-group">
+                            <span className="soft-tag">{formatDate(latestThreadMessage.receivedAt)}</span>
+                          </div>
+                        </div>
+                        <p>{latestThreadMessage.bodyText || latestThreadMessage.bodyPreview || "(empty message)"}</p>
+                      </article>
+                    ) : null}
                   </div>
 
                   <div className="reply-suggestions" data-testid="archive-reply-suggestions">
@@ -1770,7 +1787,7 @@ export function MailApp() {
                     ))}
                   </div>
 
-                  <div className="reader-card composer-card">
+                  <div className="reader-card composer-card inline-composer-card">
                     <div className="composer-shell">
                       <div className="composer-heading">
                         <div className="eyebrow">Draft</div>
