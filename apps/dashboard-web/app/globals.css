@@ -1717,6 +1717,7 @@ body {
 }
 
 .client-button {
+  position: relative;
   border-radius: 14px;
 }
 
@@ -1925,6 +1926,7 @@ body {
 }
 
 .icon-button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1942,6 +1944,47 @@ body {
   color: var(--ink);
   border-color: rgba(117, 167, 215, 0.18);
   background: rgba(255, 255, 255, 1);
+}
+
+.client-button[data-shortcut] {
+  padding-right: 40px;
+}
+
+.client-button[data-shortcut]::after,
+.icon-button[data-shortcut]::after {
+  content: attr(data-shortcut);
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(127, 116, 107, 0.88);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.client-button[data-shortcut]::after {
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(130, 108, 86, 0.08);
+}
+
+.icon-button[data-shortcut]::after {
+  right: -4px;
+  bottom: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(130, 108, 86, 0.08);
+  box-shadow: 0 6px 12px rgba(95, 73, 52, 0.08);
 }
 
 .reader-pill-row {

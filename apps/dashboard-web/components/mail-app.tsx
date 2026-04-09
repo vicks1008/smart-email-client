@@ -1110,12 +1110,12 @@ export function MailApp() {
                 </div>
               ) : workspaceView === "live" ? (
                 thunderbirdStatus?.available ? (
-                  <button className="client-button secondary" onClick={() => void refreshThunderbirdStatus()}>
+                  <button className="client-button secondary" data-shortcut="R" onClick={() => void refreshThunderbirdStatus()}>
                     <RefreshCcw size={16} />
                     Refresh live
                   </button>
                 ) : (
-                  <button className="client-button secondary" onClick={() => void refreshThunderbirdStatus()}>
+                  <button className="client-button secondary" data-shortcut="R" onClick={() => void refreshThunderbirdStatus()}>
                     <RefreshCcw size={16} />
                     Retry live
                   </button>
@@ -1124,12 +1124,13 @@ export function MailApp() {
                 <>
                   <button
                     className="client-button primary"
+                    data-shortcut="C"
                     onClick={() => (window.location.href = getMicrosoftConnectUrl(`${window.location.origin}/mail`))}
                   >
                     <MailPlus size={16} />
                     Connect
                   </button>
-                  <button className="client-button secondary" disabled={isSyncPending} onClick={() => void handleManualSync()}>
+                  <button className="client-button secondary" data-shortcut="S" disabled={isSyncPending} onClick={() => void handleManualSync()}>
                     <FolderSync size={16} />
                     Sync mailbox
                   </button>
@@ -1575,13 +1576,13 @@ export function MailApp() {
                         <p className="reader-copy">Live message from Mail.app. Read and respond in the same canvas.</p>
                       </div>
                       <div className="reader-actions">
-                        <button className="icon-button" type="button" aria-label="Reply">
+                        <button className="icon-button" data-shortcut="R" type="button" aria-label="Reply">
                           <Reply size={15} />
                         </button>
-                        <button className="icon-button" type="button" aria-label="Reply all">
+                        <button className="icon-button" data-shortcut="A" type="button" aria-label="Reply all">
                           <ReplyAll size={15} />
                         </button>
-                        <button className="icon-button" type="button" aria-label="Forward">
+                        <button className="icon-button" data-shortcut="F" type="button" aria-label="Forward">
                           <Forward size={15} />
                         </button>
                         <button className="icon-button" type="button" aria-label="More actions">
@@ -1648,13 +1649,13 @@ export function MailApp() {
                                 <span className="soft-tag">Draft</span>
                               </div>
                               <div className="composer-actions">
-                                <button className="client-button tertiary" type="button">
+                                <button className="client-button tertiary" data-shortcut="H" type="button">
                                   Send later
                                 </button>
-                                <button className="client-button tertiary" type="button">
+                                <button className="client-button tertiary" data-shortcut="M" type="button">
                                   Remind me
                                 </button>
-                                <button className="client-button primary" type="button">
+                                <button className="client-button primary" data-shortcut="⌘↵" type="button">
                                   Send
                                 </button>
                               </div>
@@ -1747,13 +1748,13 @@ export function MailApp() {
                       <p className="reader-copy">{selectedThread.replyState?.reason ?? "No reply-state rationale yet."}</p>
                     </div>
                     <div className="reader-actions">
-                      <button className="icon-button" type="button" aria-label="Reply">
+                      <button className="icon-button" data-shortcut="R" type="button" aria-label="Reply">
                         <Reply size={15} />
                       </button>
-                      <button className="icon-button" type="button" aria-label="Reply all">
+                      <button className="icon-button" data-shortcut="A" type="button" aria-label="Reply all">
                         <ReplyAll size={15} />
                       </button>
-                      <button className="icon-button" type="button" aria-label="Forward">
+                      <button className="icon-button" data-shortcut="F" type="button" aria-label="Forward">
                         <Forward size={15} />
                       </button>
                       <button className="icon-button" type="button" aria-label="More actions">
@@ -1848,14 +1849,14 @@ export function MailApp() {
                               <span className="soft-tag">Draft</span>
                             </div>
                             <div className="composer-actions">
-                              <button className="client-button tertiary" onClick={() => void copyDraft()} type="button">
+                              <button className="client-button tertiary" data-shortcut="⌘C" onClick={() => void copyDraft()} type="button">
                                 <Copy size={16} />
                                 Copy
                               </button>
-                              <button className="client-button tertiary" type="button">
+                              <button className="client-button tertiary" data-shortcut="H" type="button">
                                 Send later
                               </button>
-                              <button className="client-button primary" type="button">
+                              <button className="client-button primary" data-shortcut="⌘↵" type="button">
                                 <SendHorizontal size={16} />
                                 Send
                               </button>
