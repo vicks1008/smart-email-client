@@ -2,18 +2,26 @@
 
 import {
   Archive,
+  AtSign,
   BrainCircuit,
   Building2,
+  CircleUserRound,
   CheckCircle2,
   ChevronRight,
   Clock3,
   Copy,
   FolderSync,
+  Forward,
+  Globe,
   Inbox,
   MailPlus,
+  MapPin,
+  MoreHorizontal,
   PanelLeft,
   PlugZap,
   RefreshCcw,
+  Reply,
+  ReplyAll,
   SendHorizontal,
   ShieldAlert,
   Sparkles,
@@ -103,6 +111,52 @@ function formatShortDate(value: string | null | undefined) {
 
 function formatCount(value: number) {
   return new Intl.NumberFormat(undefined).format(value);
+}
+
+function initials(value: string | null | undefined) {
+  const base = (value ?? "").trim();
+  if (!base) {
+    return "SM";
+  }
+
+  const parts = base.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
+
+function emailDomain(value: string | null | undefined) {
+  const address = value?.trim().toLowerCase() ?? "";
+  const [, domain] = address.split("@");
+  return domain ?? "";
+}
+
+function extractEmailAddress(value: string | null | undefined) {
+  const input = value?.trim() ?? "";
+  const match = input.match(/<([^>]+@[^>]+)>/);
+  if (match?.[1]) {
+    return match[1].trim().toLowerCase();
+  }
+
+  return input.includes("@") ? input.toLowerCase() : "";
+}
+
+function primaryThreadPerson(thread: ThreadDetail | null) {
+  if (!thread) {
+    return null;
+  }
+
+  return thread.people.find((person) => !person.isMailbox) ?? thread.people[0] ?? null;
+}
+
+function primaryThreadOrganization(thread: ThreadDetail | null) {
+  if (!thread) {
+    return null;
+  }
+
+  return primaryThreadPerson(thread)?.organization ?? null;
 }
 
 function monogram(value: string | null | undefined) {
@@ -223,6 +277,20 @@ function participantName(thread: ThreadDetail) {
 
 function mailboxSignatureName(thread: ThreadDetail) {
   return thread.mailbox.displayName.split(" ")[0] ?? thread.mailbox.displayName;
+}
+
+function initialsFromLabel(value: string | null | undefined) {
+  const source = (value ?? "").trim();
+  if (!source) {
+    return "SM";
+  }
+
+  const parts = source.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
 }
 
 function draftTemplatesForThread(thread: ThreadDetail | null): DraftTemplate[] {
@@ -863,6 +931,16 @@ export function MailApp() {
     setSelectedThreadId((current) => inboxThreads.find((thread) => thread.id === current)?.id ?? inboxThreads[0]?.id ?? null);
   }, [filteredActivityOrganizations, filteredFollowUps, filteredOrganizations, inboxThreads, organizationThreads, workspaceView]);
 
+  useEffect(() => {
+    if (workspaceView !== "inbox") {
+      return;
+    }
+
+    if (inboxQueue === "needsReply" && filteredNeedsReply.length === 0 && allArchiveThreads.length > 0) {
+      setInboxQueue("allThreads");
+    }
+  }, [allArchiveThreads.length, filteredNeedsReply.length, inboxQueue, workspaceView]);
+
   const workspaceTitle =
     workspaceView === "inbox"
       ? inboxQueue === "needsReply"
@@ -895,6 +973,22 @@ export function MailApp() {
     selectedThunderbirdAccount?.name ??
     "Apple Mail";
   const draftTemplates = draftTemplatesForThread(selectedThread);
+  const selectedPerson = primaryThreadPerson(selectedThread);
+  const selectedThreadOrganization = primaryThreadOrganization(selectedThread);
+  const selectedPersonEmail = selectedPerson?.emailAddress ?? selectedThread?.messages.at(-1)?.fromAddress ?? null;
+  const selectedPersonInitials = initials(selectedPerson?.displayName ?? selectedPersonEmail ?? selectedThread?.subject ?? "Smart Mail");
+  const selectedThreadDomain = selectedThreadOrganization?.primaryDomain ?? emailDomain(selectedPersonEmail);
+  const selectedThreadKind = selectedThreadOrganization?.kind?.toLowerCase() ?? "contact";
+  const liveSenderAddress = extractEmailAddress(selectedThunderbirdMessage?.author);
+  const liveSenderDomain =
+    emailDomain(liveSenderAddress) ||
+    emailDomain(selectedThunderbirdMessage?.recipients) ||
+    emailDomain(selectedThunderbirdMessage?.accountName);
+  const liveSenderInitials = initials(selectedThunderbirdMessage?.author ?? selectedThunderbirdMessage?.subject ?? "Mail");
+  const showInspectorPane =
+    workspaceView === "accounts" ||
+    workspaceView === "analytics" ||
+    (workspaceView === "live" ? Boolean(selectedThunderbirdMessage) : Boolean(selectedThread));
 
   return (
     <main className="client-shell">
@@ -1017,7 +1111,7 @@ export function MailApp() {
             </div>
           </header>
 
-          {workspaceView !== "live" && workspaceView !== "analytics" ? (
+          {workspaceView === "accounts" ? (
             <section className="mailbox-strip">
               <div className="mailbox-strip-group">
                 <span className="eyebrow">Accounts</span>
@@ -1065,7 +1159,7 @@ export function MailApp() {
             </section>
           ) : null}
 
-          <div className="mail-grid">
+          <div className={`mail-grid ${showInspectorPane ? "" : "no-inspector"}`.trim()}>
             <section className="thread-pane">
               {workspaceView === "inbox" ? (
                 <>
@@ -1431,19 +1525,36 @@ export function MailApp() {
               ) : workspaceView === "live" ? (
                 selectedThunderbirdMessage ? (
                   <>
-                    <div className="reader-hero">
-                      <div>
+                    <div className="thread-reader-header">
+                      <div className="thread-reader-title">
                         <div className="eyebrow">Live message</div>
                         <h3 data-testid="reader-subject">{selectedThunderbirdMessage.subject || "(no subject)"}</h3>
+                        <p className="reader-copy">Browsing Mail.app live. Draft assistance stays available in the same pane.</p>
                       </div>
-                      <div className="hero-chip-group">
-                        <span className="soft-tag">{selectedThunderbirdMessage.folder}</span>
-                        <span className="soft-tag">{selectedThunderbirdMessage.read ? "read" : "unread"}</span>
+                      <div className="reader-actions">
+                        <button className="icon-button" type="button" aria-label="Reply">
+                          <Reply size={15} />
+                        </button>
+                        <button className="icon-button" type="button" aria-label="Reply all">
+                          <ReplyAll size={15} />
+                        </button>
+                        <button className="icon-button" type="button" aria-label="Forward">
+                          <Forward size={15} />
+                        </button>
+                        <button className="icon-button" type="button" aria-label="More actions">
+                          <MoreHorizontal size={15} />
+                        </button>
                       </div>
                     </div>
 
+                    <div className="reader-pill-row">
+                      <span className="soft-tag">{selectedThunderbirdMessage.folder}</span>
+                      <span className="soft-tag">{selectedThunderbirdMessage.read ? "read" : "unread"}</span>
+                      <span className="soft-tag">{selectedThunderbirdMessage.accountName ?? "Mail.app"}</span>
+                    </div>
+
                     <div className="reader-card live-message-card">
-                      <div className="message-card">
+                      <div className="message-card mail-message">
                         <div className="message-card-head">
                           <div>
                             <strong>{selectedThunderbirdMessage.author}</strong>
@@ -1452,6 +1563,47 @@ export function MailApp() {
                           <span className="soft-tag">{formatDate(selectedThunderbirdMessage.date)}</span>
                         </div>
                         <p>{selectedThunderbirdMessage.body || "(empty message)"}</p>
+                      </div>
+                    </div>
+
+                    <div className="reader-card composer-card">
+                      <div className="composer-shell">
+                        <div className="composer-heading">
+                          <div className="eyebrow">Quick reply</div>
+                          <h3>Draft from the live message</h3>
+                        </div>
+                        <div className="template-row">
+                          {["You too!", "Looking forward", "Sure thing"].map((label) => (
+                            <button
+                              key={label}
+                              className="template-pill"
+                              onClick={() => setDraftText(label)}
+                              type="button"
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <textarea
+                          className="draft-pad"
+                          value={draftText}
+                          onChange={(event) => setDraftText(event.target.value)}
+                          placeholder="Draft a reply..."
+                        />
+                        <div className="composer-toolbar">
+                          <div className="composer-meta">
+                            <span className="soft-tag">Live draft</span>
+                            <span className="soft-tag">{selectedThunderbirdMessage.author}</span>
+                          </div>
+                          <div className="composer-actions">
+                            <button className="client-button secondary" type="button">
+                              Send later
+                            </button>
+                            <button className="client-button primary" type="button">
+                              Draft
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </>
@@ -1520,86 +1672,50 @@ export function MailApp() {
                 )
               ) : selectedThread ? (
                 <>
-                  <div className="reader-hero">
-                    <div>
+                  <div className="thread-reader-header">
+                    <div className="thread-reader-title">
                       <div className="eyebrow">Conversation</div>
                       <h3 data-testid="reader-subject">{selectedThread.subject}</h3>
                       <p className="reader-copy">{selectedThread.replyState?.reason ?? "No reply-state rationale yet."}</p>
                     </div>
-                    <div className="hero-chip-group">
-                      <span className={`status-tag ${replyTone(selectedThread.replyState)}`}>{replyLabel(selectedThread.replyState)}</span>
-                      {selectedThread.messages.at(-1)?.category ? (
-                        <span className="soft-tag">{categoryLabel(selectedThread.messages.at(-1)?.category ?? null)}</span>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="reader-summary-grid">
-                    <div className="summary-tile">
-                      <span>Reply due</span>
-                      <strong>{formatDate(selectedThread.replyState?.replyDueAt)}</strong>
-                    </div>
-                    <div className="summary-tile">
-                      <span>Mailbox</span>
-                      <strong>{selectedThread.mailbox.displayName}</strong>
-                    </div>
-                    <div className="summary-tile">
-                      <span>Confidence</span>
-                      <strong>{selectedThread.replyState ? `${Math.round(selectedThread.replyState.confidence * 100)}%` : "N/A"}</strong>
-                    </div>
-                  </div>
-
-                  <div className="reader-card composer-card">
-                    <div className="pane-header">
-                      <div>
-                        <div className="eyebrow">Assistant draft pad</div>
-                        <h3>Work the reply without leaving the thread</h3>
-                      </div>
-                      <button className="client-button secondary" onClick={() => void copyDraft()}>
-                        <Copy size={16} />
-                        Copy
+                    <div className="reader-actions">
+                      <button className="icon-button" type="button" aria-label="Reply">
+                        <Reply size={15} />
+                      </button>
+                      <button className="icon-button" type="button" aria-label="Reply all">
+                        <ReplyAll size={15} />
+                      </button>
+                      <button className="icon-button" type="button" aria-label="Forward">
+                        <Forward size={15} />
+                      </button>
+                      <button className="icon-button" type="button" aria-label="More actions">
+                        <MoreHorizontal size={15} />
                       </button>
                     </div>
+                  </div>
 
-                    <div className="template-row">
-                      {draftTemplates.map((template) => (
-                        <button
-                          key={template.id}
-                          className="template-pill"
-                          onClick={() => setDraftText(template.body)}
-                          type="button"
-                        >
-                          {template.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <textarea
-                      className="draft-pad"
-                      value={draftText}
-                      onChange={(event) => setDraftText(event.target.value)}
-                      data-testid="draft-pad"
-                    />
+                  <div className="reader-pill-row">
+                    <span className={`status-tag ${replyTone(selectedThread.replyState)}`}>{replyLabel(selectedThread.replyState)}</span>
+                    {selectedThread.messages.at(-1)?.category ? (
+                      <span className="soft-tag">{categoryLabel(selectedThread.messages.at(-1)?.category ?? null)}</span>
+                    ) : null}
+                    <span className="soft-tag">{selectedThread.mailbox.displayName}</span>
+                    {selectedThread.replyState?.replyDueAt ? (
+                      <span className="soft-tag">Reply by {formatShortDate(selectedThread.replyState.replyDueAt)}</span>
+                    ) : null}
                   </div>
 
                   <div className="reader-card conversation-card">
-                    <div className="pane-header">
-                      <div>
-                        <div className="eyebrow">Thread history</div>
-                        <h3>Messages</h3>
-                      </div>
-                    </div>
-
-                    <div className="message-stack">
-                      {selectedThread.messages.map((message) => (
-                        <article key={message.id} className="message-card" data-testid={`message-${message.id}`}>
+                    <div className="message-stack conversation-stack">
+                      {selectedThread.messages.map((message, index) => (
+                        <article key={message.id} className="message-card mail-message" data-testid={`message-${message.id}`}>
                           <div className="message-card-head">
                             <div>
                               <strong>{message.fromName ?? message.fromAddress ?? "Unknown sender"}</strong>
                               <div className="subtle-line">{message.fromAddress ?? "No sender address"}</div>
                             </div>
                             <div className="message-meta-group">
-                              {message.category ? <span className="soft-tag">{categoryLabel(message.category)}</span> : null}
+                              <span className="soft-tag">{index === selectedThread.messages.length - 1 ? "Latest" : "Earlier"}</span>
                               <span className="soft-tag">{formatDate(message.receivedAt)}</span>
                             </div>
                           </div>
@@ -1608,47 +1724,123 @@ export function MailApp() {
                       ))}
                     </div>
                   </div>
+
+                  <div className="reader-card composer-card">
+                    <div className="composer-shell">
+                      <div className="composer-heading">
+                        <div className="eyebrow">Draft</div>
+                        <h3>Reply to {selectedPerson?.displayName ?? selectedPersonEmail ?? "contact"}</h3>
+                      </div>
+                      <div className="template-row">
+                        {draftTemplates.map((template) => (
+                          <button
+                            key={template.id}
+                            className="template-pill"
+                            onClick={() => setDraftText(template.body)}
+                            type="button"
+                          >
+                            {template.label}
+                          </button>
+                        ))}
+                      </div>
+                      <textarea
+                        className="draft-pad"
+                        value={draftText}
+                        onChange={(event) => setDraftText(event.target.value)}
+                        data-testid="draft-pad"
+                      />
+                      <div className="composer-toolbar">
+                        <div className="composer-meta">
+                          <span className="soft-tag">To {selectedPerson?.displayName ?? selectedPersonEmail ?? "recipient"}</span>
+                          <span className="soft-tag">{selectedThread.mailbox.displayName}</span>
+                        </div>
+                        <div className="composer-actions">
+                          <button className="client-button secondary" onClick={() => void copyDraft()} type="button">
+                            <Copy size={16} />
+                            Copy
+                          </button>
+                          <button className="client-button primary" type="button">
+                            <SendHorizontal size={16} />
+                            Done
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </>
               ) : (
                 <div className="empty-state">Choose a thread from the left to open the reader and work the conversation.</div>
               )}
             </section>
 
-            <aside className="inspector-pane">
+            {showInspectorPane ? <aside className="inspector-pane">
               {workspaceView !== "live" && selectedThread ? (
                 <>
-                  <div className="inspector-card">
-                    <div className="pane-header">
-                      <div>
-                        <div className="eyebrow">People and company</div>
-                        <h3>Context</h3>
+                  <div className="inspector-card profile-card">
+                    <div className="profile-identity">
+                      <div className="profile-avatar">{selectedPersonInitials}</div>
+                      <div className="profile-copy">
+                        <div className="eyebrow">Primary contact</div>
+                        <h3>{selectedPerson?.displayName ?? selectedPersonEmail ?? "Unknown contact"}</h3>
+                        <p>{selectedPersonEmail ?? "No sender email available"}</p>
                       </div>
-                      <Users size={18} />
                     </div>
-                    <div className="context-list">
-                      {selectedThread.people.map((person) => (
-                        <div key={person.id} className="context-row">
-                          <div>
-                            <strong>{person.displayName ?? person.emailAddress}</strong>
-                            <div className="subtle-line">
-                              {person.organization?.name ?? person.emailAddress}
-                              {person.contact?.roleTitle ? ` · ${person.contact.roleTitle}` : ""}
-                            </div>
-                          </div>
-                          <span className="soft-tag">{person.isMailbox ? "mailbox" : "contact"}</span>
-                        </div>
-                      ))}
+
+                    <div className="profile-chip-row">
+                      <span className={`status-tag ${replyTone(selectedThread.replyState)}`}>{replyLabel(selectedThread.replyState)}</span>
+                      <span className="soft-tag">{selectedThreadKind}</span>
+                      <span className="soft-tag">{selectedThread.mailbox.displayName}</span>
+                    </div>
+
+                    <div className="profile-detail-list">
+                      <div className="profile-detail-row">
+                        <span>
+                          <AtSign size={14} />
+                          Email
+                        </span>
+                        <strong>{selectedPersonEmail ?? "Unknown"}</strong>
+                      </div>
+                      <div className="profile-detail-row">
+                        <span>
+                          <Building2 size={14} />
+                          Organization
+                        </span>
+                        <strong>{selectedThreadOrganization?.name ?? "No linked company yet"}</strong>
+                      </div>
+                      <div className="profile-detail-row">
+                        <span>
+                          <Globe size={14} />
+                          Domain
+                        </span>
+                        <strong>{selectedThreadDomain || "No domain detected"}</strong>
+                      </div>
+                      <div className="profile-detail-row">
+                        <span>
+                          <CircleUserRound size={14} />
+                          Role
+                        </span>
+                        <strong>{selectedPerson?.contact?.roleTitle ?? "Unknown"}</strong>
+                      </div>
+                    </div>
+
+                    <div className="profile-note">
+                      <div className="eyebrow">Relationship note</div>
+                      <p>
+                        {selectedThread.replyState?.reason ??
+                          "This thread is ready for contact context once more history and sent mail examples are indexed."}
+                      </p>
                     </div>
                   </div>
 
-                  <div className="inspector-card">
+                  <div className="inspector-card profile-support-card">
                     <div className="pane-header">
                       <div>
-                        <div className="eyebrow">Follow-up state</div>
-                        <h3>Next step</h3>
+                        <div className="eyebrow">Reply plan</div>
+                        <h3>Next move</h3>
                       </div>
                       <BrainCircuit size={18} />
                     </div>
+
                     <div className="metric-stack">
                       <div className="metric-row">
                         <span>Status</span>
@@ -1663,32 +1855,47 @@ export function MailApp() {
                         <strong>{formatShortDate(selectedThread.replyState?.suggestedFollowUpAt)}</strong>
                       </div>
                     </div>
-                    <p className="inspector-copy">{selectedThread.replyState?.reason ?? "No rationale available yet."}</p>
+
+                    {selectedThread.followUpTasks.length ? (
+                      <div className="profile-followup-list">
+                        {selectedThread.followUpTasks.map((task) => (
+                          <div key={task.id} className="profile-followup-row">
+                            <div>
+                              <strong>{task.title}</strong>
+                              <div className="subtle-line">{task.note ?? "Auto-created from reply state."}</div>
+                            </div>
+                            <span className="soft-tag">{formatShortDate(task.dueAt)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="inspector-card profile-support-card">
+                    <div className="pane-header">
+                      <div>
+                        <div className="eyebrow">People in thread</div>
+                        <h3>Participants</h3>
+                      </div>
+                      <Users size={18} />
+                    </div>
+
+                    <div className="profile-followup-list">
+                      {selectedThread.people.map((person) => (
+                        <div key={person.id} className="profile-followup-row">
+                          <div>
+                            <strong>{person.displayName ?? person.emailAddress}</strong>
+                            <div className="subtle-line">
+                              {person.organization?.name ?? person.emailAddress}
+                              {person.contact?.roleTitle ? ` · ${person.contact.roleTitle}` : ""}
+                            </div>
+                          </div>
+                          <span className="soft-tag">{person.isMailbox ? "mailbox" : "contact"}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </>
-              ) : null}
-
-              {workspaceView !== "live" && selectedThread?.followUpTasks.length ? (
-                <div className="inspector-card">
-                  <div className="pane-header">
-                    <div>
-                      <div className="eyebrow">Reminders</div>
-                      <h3>Pending follow-ups</h3>
-                    </div>
-                    <Clock3 size={18} />
-                  </div>
-                  <div className="context-list">
-                    {selectedThread.followUpTasks.map((task) => (
-                      <div key={task.id} className="context-row">
-                        <div>
-                          <strong>{task.title}</strong>
-                          <div className="subtle-line">{task.note ?? "Auto-created from reply state."}</div>
-                        </div>
-                        <span className="soft-tag">{formatShortDate(task.dueAt)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               ) : null}
 
               {workspaceView === "analytics" ? (
@@ -1725,140 +1932,186 @@ export function MailApp() {
               ) : null}
 
               {workspaceView === "live" && selectedThunderbirdMessage ? (
-                <div className="inspector-card">
+                <>
+                  <div className="inspector-card profile-card">
+                    <div className="profile-identity">
+                      <div className="profile-avatar">{liveSenderInitials}</div>
+                      <div className="profile-copy">
+                        <div className="eyebrow">Live sender</div>
+                        <h3>{selectedThunderbirdMessage.author}</h3>
+                        <p>{liveSenderAddress || selectedThunderbirdMessage.accountName || "Mail.app contact"}</p>
+                      </div>
+                    </div>
+
+                    <div className="profile-chip-row">
+                      <span className="soft-tag">{selectedThunderbirdMessage.folder}</span>
+                      <span className="soft-tag">{selectedThunderbirdMessage.read ? "read" : "unread"}</span>
+                      <span className="soft-tag">{selectedThunderbirdMessage.accountName ?? "Apple Mail"}</span>
+                    </div>
+
+                    <div className="profile-detail-list">
+                      <div className="profile-detail-row">
+                        <span>
+                          <AtSign size={14} />
+                          Sender
+                        </span>
+                        <strong>{liveSenderAddress || "Unknown"}</strong>
+                      </div>
+                      <div className="profile-detail-row">
+                        <span>
+                          <Globe size={14} />
+                          Domain
+                        </span>
+                        <strong>{liveSenderDomain || "No domain detected"}</strong>
+                      </div>
+                      <div className="profile-detail-row">
+                        <span>
+                          <MapPin size={14} />
+                          Folder
+                        </span>
+                        <strong>{selectedThunderbirdMessage.folder}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="inspector-card profile-support-card">
+                    <div className="pane-header">
+                      <div>
+                        <div className="eyebrow">Live metadata</div>
+                        <h3>Apple Mail details</h3>
+                      </div>
+                      <PanelLeft size={18} />
+                    </div>
+                    <div className="metric-stack">
+                      <div className="metric-row">
+                        <span>Account</span>
+                        <strong>{selectedThunderbirdMessage.accountName ?? "Unknown"}</strong>
+                      </div>
+                      <div className="metric-row">
+                        <span>Thread ID</span>
+                        <strong>{selectedThunderbirdMessage.threadId ?? "None"}</strong>
+                      </div>
+                      <div className="metric-row">
+                        <span>Attachments</span>
+                        <strong>{selectedThunderbirdMessage.attachments.length}</strong>
+                      </div>
+                      <div className="metric-row">
+                        <span>Priority</span>
+                        <strong>{selectedThunderbirdMessage.priority ?? "normal"}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {workspaceView === "accounts" || workspaceView === "analytics" ? (
+                <div className="inspector-card utility-card">
                   <div className="pane-header">
                     <div>
-                      <div className="eyebrow">Live metadata</div>
-                      <h3>Apple Mail details</h3>
+                      <div className="eyebrow">Operations</div>
+                      <h3>Mailbox controls</h3>
                     </div>
-                    <PanelLeft size={18} />
+                    <FolderSync size={18} />
                   </div>
-                  <div className="metric-stack">
-                    <div className="metric-row">
-                      <span>Account</span>
-                      <strong>{selectedThunderbirdMessage.accountName ?? "Unknown"}</strong>
+
+                  <details className="client-details" open={workspaceView === "accounts"}>
+                    <summary>
+                      <PlugZap size={16} />
+                      Apple Mail live source
+                    </summary>
+                    <div className="client-form">
+                      <div className="subtle-line">
+                        Smart Email Client reads live mail from Mail.app on this Mac. Make sure Mail.app is open and synced, then allow Automation access if macOS prompts for it.
+                      </div>
+                      <button
+                        className="client-button secondary"
+                        onClick={() => void refreshThunderbirdStatus()}
+                        type="button"
+                      >
+                        <RefreshCcw size={16} />
+                        Refresh status
+                      </button>
+                      {thunderbirdStatus?.setupSteps?.length ? (
+                        <div className="soft-panel">
+                          {thunderbirdStatus.setupSteps.map((step) => (
+                            <div key={step} className="subtle-line">
+                              {step}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="metric-row">
-                      <span>Thread ID</span>
-                      <strong>{selectedThunderbirdMessage.threadId ?? "None"}</strong>
-                    </div>
-                    <div className="metric-row">
-                      <span>Attachments</span>
-                      <strong>{selectedThunderbirdMessage.attachments.length}</strong>
-                    </div>
-                    <div className="metric-row">
-                      <span>Priority</span>
-                      <strong>{selectedThunderbirdMessage.priority ?? "normal"}</strong>
-                    </div>
-                  </div>
+                  </details>
+
+                  <details className="client-details">
+                    <summary>
+                      <Upload size={16} />
+                      Import archive
+                    </summary>
+                    <form className="client-form" onSubmit={(event) => void handleArchiveImport(event)}>
+                      {!selectedMailboxId ? (
+                        <>
+                          <input
+                            className="client-input"
+                            placeholder="Mailbox email for imported archive"
+                            type="email"
+                            value={importMailboxEmail}
+                            onChange={(event) => setImportMailboxEmail(event.target.value)}
+                            required
+                          />
+                          <input
+                            className="client-input"
+                            placeholder="Optional mailbox display name"
+                            value={importMailboxName}
+                            onChange={(event) => setImportMailboxName(event.target.value)}
+                          />
+                        </>
+                      ) : null}
+                      <input
+                        className="client-input"
+                        accept=".olm,.eml,message/rfc822"
+                        type="file"
+                        onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
+                        required
+                      />
+                      <button className="client-button secondary" disabled={isImportPending} type="submit">
+                        <Upload size={16} />
+                        Import archive
+                      </button>
+                    </form>
+                  </details>
+
+                  <details className="client-details">
+                    <summary>
+                      <Archive size={16} />
+                      Add shared mailbox
+                    </summary>
+                    <form className="client-form" onSubmit={(event) => void handleAddSharedMailbox(event)}>
+                      <input
+                        className="client-input"
+                        placeholder="shared@company.com"
+                        type="email"
+                        value={sharedMailboxEmail}
+                        onChange={(event) => setSharedMailboxEmail(event.target.value)}
+                        required
+                      />
+                      <input
+                        className="client-input"
+                        placeholder="Optional display name"
+                        value={sharedMailboxName}
+                        onChange={(event) => setSharedMailboxName(event.target.value)}
+                      />
+                      <button className="client-button secondary" disabled={isMailboxPending || !selectedAccount} type="submit">
+                        <SendHorizontal size={16} />
+                        Save mailbox
+                      </button>
+                    </form>
+                  </details>
                 </div>
               ) : null}
 
-              <div className="inspector-card">
-                <div className="pane-header">
-                  <div>
-                    <div className="eyebrow">Operations</div>
-                    <h3>Mailbox controls</h3>
-                  </div>
-                  <FolderSync size={18} />
-                </div>
-
-                <details className="client-details" open={workspaceView === "live"}>
-                  <summary>
-                    <PlugZap size={16} />
-                    Apple Mail live source
-                  </summary>
-                  <div className="client-form">
-                    <div className="subtle-line">
-                      Smart Email Client reads live mail from Mail.app on this Mac. Make sure Mail.app is open and synced, then allow Automation access if macOS prompts for it.
-                    </div>
-                    <button
-                      className="client-button secondary"
-                      onClick={() => void refreshThunderbirdStatus()}
-                      type="button"
-                    >
-                      <RefreshCcw size={16} />
-                      Refresh status
-                    </button>
-                    {thunderbirdStatus?.setupSteps?.length ? (
-                      <div className="soft-panel">
-                        {thunderbirdStatus.setupSteps.map((step) => (
-                          <div key={step} className="subtle-line">
-                            {step}
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </details>
-
-                <details className="client-details">
-                  <summary>
-                    <Upload size={16} />
-                    Import archive
-                  </summary>
-                  <form className="client-form" onSubmit={(event) => void handleArchiveImport(event)}>
-                    {!selectedMailboxId ? (
-                      <>
-                        <input
-                          className="client-input"
-                          placeholder="Mailbox email for imported archive"
-                          type="email"
-                          value={importMailboxEmail}
-                          onChange={(event) => setImportMailboxEmail(event.target.value)}
-                          required
-                        />
-                        <input
-                          className="client-input"
-                          placeholder="Optional mailbox display name"
-                          value={importMailboxName}
-                          onChange={(event) => setImportMailboxName(event.target.value)}
-                        />
-                      </>
-                    ) : null}
-                    <input
-                      className="client-input"
-                      accept=".olm,.eml,message/rfc822"
-                      type="file"
-                      onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
-                      required
-                    />
-                    <button className="client-button secondary" disabled={isImportPending} type="submit">
-                      <Upload size={16} />
-                      Import archive
-                    </button>
-                  </form>
-                </details>
-
-                <details className="client-details">
-                  <summary>
-                    <Archive size={16} />
-                    Add shared mailbox
-                  </summary>
-                  <form className="client-form" onSubmit={(event) => void handleAddSharedMailbox(event)}>
-                    <input
-                      className="client-input"
-                      placeholder="shared@company.com"
-                      type="email"
-                      value={sharedMailboxEmail}
-                      onChange={(event) => setSharedMailboxEmail(event.target.value)}
-                      required
-                    />
-                    <input
-                      className="client-input"
-                      placeholder="Optional display name"
-                      value={sharedMailboxName}
-                      onChange={(event) => setSharedMailboxName(event.target.value)}
-                    />
-                    <button className="client-button secondary" disabled={isMailboxPending || !selectedAccount} type="submit">
-                      <SendHorizontal size={16} />
-                      Save mailbox
-                    </button>
-                  </form>
-                </details>
-              </div>
-
-              <div className="inspector-card">
+              {workspaceView === "accounts" || workspaceView === "analytics" ? (
+                <div className="inspector-card utility-card">
                 <div className="pane-header">
                   <div>
                     <div className="eyebrow">Status</div>
@@ -1887,10 +2140,11 @@ export function MailApp() {
                   </div>
                 </div>
                 <div className="subtle-line">{thunderbirdStatus?.bridgeUrl ?? "Mail.app Automation"}</div>
-              </div>
+                </div>
+              ) : null}
 
-              {thunderbirdSyncSources.length > 0 ? (
-                <div className="inspector-card">
+              {(workspaceView === "accounts" || workspaceView === "analytics") && thunderbirdSyncSources.length > 0 ? (
+                <div className="inspector-card utility-card">
                   <div className="pane-header">
                     <div>
                       <div className="eyebrow">Connected sources</div>
@@ -1911,7 +2165,7 @@ export function MailApp() {
                   </div>
                 </div>
               ) : null}
-            </aside>
+            </aside> : null}
           </div>
         </section>
       </div>
