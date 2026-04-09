@@ -1236,9 +1236,10 @@ export function MailApp() {
                           </div>
                           <div className="thread-row-subject">{thread.subject}</div>
                           <p>{thread.latestMessage?.bodyPreview ?? "No preview yet."}</p>
-                          <div className="thread-row-meta">
-                            <span className={`status-tag ${replyTone(thread.replyState)}`}>{replyLabel(thread.replyState)}</span>
-                            {thread.latestCategory ? <span className="soft-tag">{categoryLabel(thread.latestCategory)}</span> : null}
+                          <div className="thread-row-footer">
+                            <span>{replyLabel(thread.replyState)}</span>
+                            {thread.latestCategory ? <span>{categoryLabel(thread.latestCategory)}</span> : null}
+                            {thread.unreadCount > 0 ? <span>{thread.unreadCount} unread</span> : null}
                           </div>
                         </button>
                       ))
@@ -1464,9 +1465,9 @@ export function MailApp() {
                           </div>
                           <div className="thread-row-subject">{message.subject || "(no subject)"}</div>
                           <p>{message.recipients}</p>
-                          <div className="thread-row-meta">
-                            <span className="soft-tag">{message.folder}</span>
-                            {!message.read ? <span className="soft-tag">unread</span> : null}
+                          <div className="thread-row-footer">
+                            <span>{message.folder}</span>
+                            {!message.read ? <span>unread</span> : null}
                           </div>
                         </button>
                       ))
