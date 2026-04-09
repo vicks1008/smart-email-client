@@ -9,6 +9,7 @@ import { registerAppleMailRoutes } from "./routes/apple-mail";
 import { registerMailRoutes } from "./routes/mail";
 import { registerImportRoutes } from "./routes/imports";
 import { registerOutlookMcpRoutes } from "./routes/outlook-mcp";
+import { registerSettingsRoutes } from "./routes/settings";
 import { registerThunderbirdRoutes } from "./routes/thunderbird";
 import { registerThreadRoutes } from "./routes/threads";
 
@@ -47,6 +48,7 @@ export function buildApp() {
   app.register(registerMailRoutes);
   app.register(registerImportRoutes);
   app.register(registerOutlookMcpRoutes);
+  app.register(registerSettingsRoutes);
   app.register(registerThunderbirdRoutes);
   app.register(registerThreadRoutes);
 
