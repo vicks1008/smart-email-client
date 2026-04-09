@@ -4,6 +4,31 @@ export type { NormalizedMessage } from "./mail-sync";
 export { prisma } from "./db";
 export { getEnv, hasMicrosoftOAuthConfig } from "./env";
 export {
+  accountsSettingsSchema,
+  analyticsModeSchema,
+  defaultAccountsSettings,
+  defaultModelsSettings,
+  defaultWorkflowsSettings,
+  ensureSettingsRecord,
+  getCurrentAppSettings,
+  getModelProviders,
+  modelSourceCategorySchema,
+  normalizeAccountsSettings,
+  normalizePrivateModelsSettings,
+  normalizeWorkflowsSettings,
+  oauthStatusSchema,
+  privateModelsSettingsSchema,
+  publicModelsSettingsSchema,
+  routingModeSchema,
+  toJsonValue,
+  toPublicModelsSettings,
+  workflowsSettingsSchema,
+  type AccountsSettings,
+  type PrivateModelsSettings,
+  type PublicModelsSettings,
+  type WorkflowsSettings
+} from "./app-settings";
+export {
   getOrganizationActivity as getOrganizationActivityAnalytics,
   type OrganizationActivityAnalytics,
   type OrganizationActivityRecord

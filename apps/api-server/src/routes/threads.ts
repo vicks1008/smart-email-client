@@ -1,10 +1,13 @@
 import {
+  FollowUpTaskSource,
   FollowUpTaskStatus,
   MessageCategoryLabel,
   OrganizationKind,
-  prisma
+  getCurrentAppSettings,
+  prisma,
+  toPublicModelsSettings
 } from "@smart-email/core";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 
 function normalizeAddress(address?: string | null) {
@@ -34,7 +37,208 @@ function inferredKindFromCategory(label: MessageCategoryLabel | null) {
   }
 }
 
-function serializeThread(thread: Awaited<ReturnType<typeof getThreadList>>[number]) {
+function endOfToday() {
+  const value = new Date();
+  value.setHours(23, 59, 59, 999);
+  return value;
+}
+
+function monthsAgo(months: number) {
+  const value = new Date();
+  value.setMonth(value.getMonth() - months);
+  return value;
+}
+
+function addHours(value: Date, hours: number) {
+  return new Date(value.getTime() + hours * 60 * 60 * 1000);
+}
+
+function clipSentence(value: string, fallback: string, maxLength = 220) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function threadListInclude() {
+  return {
+    mailbox: true,
+    replyState: true,
+    participantsExpanded: {
+      include: {
+        organization: true
+      }
+    },
+    followUpTasks: {
+      where: {
+        status: FollowUpTaskStatus.PENDING
+      },
+      orderBy: {
+        dueAt: "asc" as const
+      }
+    },
+    messages: {
+      orderBy: {
+        receivedAt: "desc" as const
+      },
+      take: 1,
+      include: {
+        category: true
+      }
+    }
+  };
+}
+
+function threadDetailInclude() {
+  return {
+    mailbox: true,
+    replyState: true,
+    participantsExpanded: {
+      include: {
+        contact: {
+          include: {
+            emailAddresses: true
+          }
+        },
+        organization: true
+      }
+    },
+    followUpTasks: {
+      where: {
+        status: FollowUpTaskStatus.PENDING
+      },
+      orderBy: {
+        dueAt: "asc" as const
+      }
+    },
+    messages: {
+      orderBy: {
+        receivedAt: "asc" as const
+      },
+      include: {
+        category: true
+      }
+    }
+  };
+}
+
+function threadStatusInclude() {
+  return {
+    mailbox: true,
+    replyState: true,
+    followUpTasks: {
+      where: {
+        status: FollowUpTaskStatus.PENDING
+      },
+      orderBy: {
+        dueAt: "asc" as const
+      }
+    },
+    messages: {
+      orderBy: {
+        receivedAt: "desc" as const
+      },
+      take: 1
+    }
+  };
+}
+
+type ThreadListRecord = Awaited<ReturnType<typeof getThreadList>>[number];
+type ThreadDetailRecord = NonNullable<Awaited<ReturnType<typeof getThreadDetailRecord>>>;
+type ThreadStatusRecord = NonNullable<Awaited<ReturnType<typeof getThreadStatusRecord>>>;
+type ThreadStatusLike = {
+  id: string;
+  mailboxId: string;
+  subject: string;
+  unreadCount: number;
+  archivedAt: Date | null;
+  lastMessageAt: Date;
+  mailbox: ThreadStatusRecord["mailbox"];
+  replyState: ThreadStatusRecord["replyState"];
+  followUpTasks: ThreadStatusRecord["followUpTasks"];
+  messages: ThreadStatusRecord["messages"];
+};
+
+function serializeReplyState(
+  replyState: ThreadListRecord["replyState"] | ThreadDetailRecord["replyState"] | ThreadStatusRecord["replyState"]
+) {
+  return replyState
+    ? {
+        status: replyState.status,
+        reason: replyState.reason,
+        confidence: replyState.confidence,
+        needsReply: replyState.needsReply,
+        waitingOnThem: replyState.waitingOnThem,
+        replyDueAt: replyState.replyDueAt,
+        staleAt: replyState.staleAt,
+        suggestedFollowUpAt: replyState.suggestedFollowUpAt,
+        isOverdue: replyState.isOverdue
+      }
+    : null;
+}
+
+function serializeMailbox(
+  mailbox: ThreadListRecord["mailbox"] | ThreadDetailRecord["mailbox"] | ThreadStatusRecord["mailbox"]
+) {
+  return {
+    id: mailbox.id,
+    emailAddress: mailbox.emailAddress,
+    displayName: mailbox.displayName,
+    kind: mailbox.kind,
+    role: mailbox.role
+  };
+}
+
+function serializePendingFollowUp(task: ThreadListRecord["followUpTasks"][number] | ThreadDetailRecord["followUpTasks"][number]) {
+  return {
+    id: task.id,
+    title: task.title,
+    note: task.note,
+    dueAt: task.dueAt,
+    status: task.status
+  };
+}
+
+function serializeThreadStatus(thread: ThreadStatusLike) {
+  const latestMessage = thread.messages[0] ?? null;
+  const nextFollowUp = thread.followUpTasks[0] ?? null;
+
+  return {
+    id: thread.id,
+    mailboxId: thread.mailboxId,
+    subject: thread.subject,
+    unreadCount: thread.unreadCount,
+    archivedAt: thread.archivedAt,
+    lastMessageAt: thread.lastMessageAt,
+    mailbox: serializeMailbox(thread.mailbox),
+    replyState: serializeReplyState(thread.replyState),
+    latestMessage: latestMessage
+      ? {
+          id: latestMessage.id,
+          fromName: latestMessage.fromName,
+          fromAddress: latestMessage.fromAddress,
+          bodyPreview: latestMessage.bodyPreview,
+          receivedAt: latestMessage.receivedAt,
+          isRead: latestMessage.isRead,
+          hasAttachments: latestMessage.hasAttachments,
+          importance: latestMessage.importance
+        }
+      : null,
+    followUp: {
+      pendingCount: thread.followUpTasks.length,
+      nextDueAt: nextFollowUp?.dueAt ?? null,
+      nextTask: nextFollowUp ? serializePendingFollowUp(nextFollowUp) : null
+    }
+  };
+}
+
+function serializeThread(thread: ThreadListRecord) {
   const latestMessage = thread.messages[0];
   const primaryExternalParticipant =
     thread.participantsExpanded.find((participant) => !participant.isMailbox) ?? null;
@@ -45,14 +249,9 @@ function serializeThread(thread: Awaited<ReturnType<typeof getThreadList>>[numbe
     subject: thread.subject,
     participants: thread.participants,
     unreadCount: thread.unreadCount,
+    archivedAt: thread.archivedAt,
     lastMessageAt: thread.lastMessageAt,
-    mailbox: {
-      id: thread.mailbox.id,
-      emailAddress: thread.mailbox.emailAddress,
-      displayName: thread.mailbox.displayName,
-      kind: thread.mailbox.kind,
-      role: thread.mailbox.role
-    },
+    mailbox: serializeMailbox(thread.mailbox),
     primaryOrganization: primaryExternalParticipant?.organization
       ? {
           id: primaryExternalParticipant.organization.id,
@@ -61,19 +260,11 @@ function serializeThread(thread: Awaited<ReturnType<typeof getThreadList>>[numbe
           primaryDomain: primaryExternalParticipant.organization.primaryDomain
         }
       : null,
-    replyState: thread.replyState
-      ? {
-          status: thread.replyState.status,
-          reason: thread.replyState.reason,
-          confidence: thread.replyState.confidence,
-          needsReply: thread.replyState.needsReply,
-          waitingOnThem: thread.replyState.waitingOnThem,
-          replyDueAt: thread.replyState.replyDueAt,
-          staleAt: thread.replyState.staleAt,
-          suggestedFollowUpAt: thread.replyState.suggestedFollowUpAt,
-          isOverdue: thread.replyState.isOverdue
-        }
-      : null,
+    replyState: serializeReplyState(thread.replyState),
+    followUp: {
+      pendingCount: thread.followUpTasks.length,
+      nextDueAt: thread.followUpTasks[0]?.dueAt ?? null
+    },
     latestCategory: latestMessage?.category
       ? {
           label: latestMessage.category.label,
@@ -96,72 +287,48 @@ function serializeThread(thread: Awaited<ReturnType<typeof getThreadList>>[numbe
   };
 }
 
-function endOfToday() {
-  const value = new Date();
-  value.setHours(23, 59, 59, 999);
-  return value;
-}
-
-function monthsAgo(months: number) {
-  const value = new Date();
-  value.setMonth(value.getMonth() - months);
-  return value;
-}
-
-function threadInclude() {
-  return {
-    mailbox: true,
-    replyState: true,
-    participantsExpanded: {
-      include: {
-        organization: true
-      }
-    },
-    messages: {
-      orderBy: {
-        receivedAt: "desc" as const
-      },
-      take: 1,
-      include: {
-        category: true
-      }
-    }
-  };
-}
-
-async function getThreadList(mailboxId?: string, limit = 40) {
+async function getThreadList(mailboxId?: string, limit = 40, includeArchived = false) {
   return prisma.thread.findMany({
-    where: mailboxId
-      ? {
-          mailboxId
-        }
-      : undefined,
+    where: {
+      ...(mailboxId ? { mailboxId } : {}),
+      ...(includeArchived ? {} : { archivedAt: null })
+    },
     orderBy: {
       lastMessageAt: "desc"
     },
     take: limit,
-    include: threadInclude()
+    include: threadListInclude()
   });
 }
 
-async function getWorkbenchData(mailboxId?: string, limit = 24) {
+async function getWorkbenchData(mailboxId?: string, limit = 24, includeArchived = false) {
+  const threadWhere = {
+    ...(mailboxId ? { mailboxId } : {}),
+    ...(includeArchived ? {} : { archivedAt: null })
+  };
+
   const threads = await prisma.thread.findMany({
-    where: mailboxId
-      ? {
-          mailboxId
-        }
-      : undefined,
+    where: threadWhere,
     orderBy: {
       lastMessageAt: "desc"
     },
     take: 200,
-    include: threadInclude()
+    include: threadListInclude()
   });
 
   const pendingTasks = await prisma.followUpTask.findMany({
     where: {
       ...(mailboxId ? { mailboxId } : {}),
-      status: FollowUpTaskStatus.PENDING
+      status: FollowUpTaskStatus.PENDING,
+      ...(includeArchived
+        ? {}
+        : {
+            thread: {
+              is: {
+                archivedAt: null
+              }
+            }
+          })
     },
     include: {
       mailbox: true,
@@ -522,16 +689,323 @@ async function getOrganizationActivity(mailboxId?: string, months = 4, limit = 2
   };
 }
 
+async function getThreadDetailRecord(threadId: string) {
+  return prisma.thread.findUnique({
+    where: {
+      id: threadId
+    },
+    include: threadDetailInclude()
+  });
+}
+
+async function getThreadStatusRecord(threadId: string) {
+  return prisma.thread.findUnique({
+    where: {
+      id: threadId
+    },
+    include: threadStatusInclude()
+  });
+}
+
+async function requireThreadStatus(threadId: string, reply: FastifyReply) {
+  const thread = await getThreadStatusRecord(threadId);
+  if (!thread) {
+    await reply.status(404).send({
+      error: "Thread not found."
+    });
+    return null;
+  }
+
+  return thread;
+}
+
+function serializeThreadDetail(thread: ThreadDetailRecord) {
+  return {
+    thread: {
+      id: thread.id,
+      subject: thread.subject,
+      participants: thread.participants,
+      unreadCount: thread.unreadCount,
+      archivedAt: thread.archivedAt,
+      lastMessageAt: thread.lastMessageAt,
+      mailbox: serializeMailbox(thread.mailbox),
+      replyState: serializeReplyState(thread.replyState),
+      people: thread.participantsExpanded.map((participant) => ({
+        id: participant.id,
+        emailAddress: participant.emailAddress,
+        displayName: participant.displayName,
+        isMailbox: participant.isMailbox,
+        isSharedMailbox: participant.isSharedMailbox,
+        organization: participant.organization
+          ? {
+              id: participant.organization.id,
+              name: participant.organization.name,
+              kind: participant.organization.kind,
+              primaryDomain: participant.organization.primaryDomain
+            }
+          : null,
+        contact: participant.contact
+          ? {
+              id: participant.contact.id,
+              displayName: participant.contact.displayName,
+              roleTitle: participant.contact.roleTitle,
+              isMailboxOwner: participant.contact.isMailboxOwner,
+              emailAddresses: participant.contact.emailAddresses.map((emailAddress) => emailAddress.emailAddress)
+            }
+          : null
+      })),
+      followUpTasks: thread.followUpTasks.map(serializePendingFollowUp),
+      messages: thread.messages.map((message) => ({
+        id: message.id,
+        subject: message.subject,
+        fromName: message.fromName,
+        fromAddress: message.fromAddress,
+        toRecipients: message.toRecipients,
+        ccRecipients: message.ccRecipients,
+        receivedAt: message.receivedAt,
+        sentAt: message.sentAt,
+        bodyPreview: message.bodyPreview,
+        bodyText: message.bodyText,
+        bodyHtml: message.bodyHtml,
+        webLink: message.webLink,
+        isRead: message.isRead,
+        hasAttachments: message.hasAttachments,
+        importance: message.importance,
+        category: message.category
+          ? {
+              label: message.category.label,
+              confidence: message.category.confidence,
+              source: message.category.source
+            }
+          : null
+      }))
+    }
+  };
+}
+
+function getMailboxAddressSet(thread: ThreadDetailRecord) {
+  return new Set(
+    [
+      thread.mailbox.emailAddress,
+      ...thread.participantsExpanded.filter((participant) => participant.isMailbox).map((participant) => participant.emailAddress)
+    ]
+      .map((value) => normalizeAddress(value))
+      .filter(Boolean)
+  );
+}
+
+function getLatestInboundMessage(thread: ThreadDetailRecord) {
+  const mailboxAddresses = getMailboxAddressSet(thread);
+
+  return (
+    [...thread.messages]
+      .reverse()
+      .find((message) => {
+        const fromAddress = normalizeAddress(message.fromAddress);
+        return fromAddress && !mailboxAddresses.has(fromAddress);
+      }) ?? null
+  );
+}
+
+function getLatestOutboundMessage(thread: ThreadDetailRecord) {
+  const mailboxAddresses = getMailboxAddressSet(thread);
+
+  return (
+    [...thread.messages]
+      .reverse()
+      .find((message) => {
+        const fromAddress = normalizeAddress(message.fromAddress);
+        return fromAddress && mailboxAddresses.has(fromAddress);
+      }) ?? null
+  );
+}
+
+async function buildAssistantPayload(thread: ThreadDetailRecord) {
+  const settings = await getCurrentAppSettings();
+  const publicModels = toPublicModelsSettings(settings.models);
+  const primaryExternalParticipant =
+    thread.participantsExpanded.find((participant) => !participant.isMailbox) ?? null;
+  const latestMessage = thread.messages[thread.messages.length - 1] ?? null;
+  const latestInboundMessage = getLatestInboundMessage(thread);
+  const latestOutboundMessage = getLatestOutboundMessage(thread);
+  const pendingFollowUp = thread.followUpTasks[0] ?? null;
+  const organization = primaryExternalParticipant?.organization ?? null;
+  const contact = primaryExternalParticipant?.contact ?? null;
+  const counterpartName =
+    primaryExternalParticipant?.displayName ||
+    contact?.displayName ||
+    organization?.name ||
+    latestInboundMessage?.fromName ||
+    latestInboundMessage?.fromAddress ||
+    "the sender";
+  const summarySource =
+    latestInboundMessage?.bodyPreview ||
+    latestMessage?.bodyPreview ||
+    thread.subject ||
+    "Recent activity is available in the thread.";
+  const conciseSummary = clipSentence(
+    `${thread.subject || "Untitled thread"} with ${counterpartName}. ${summarySource}`,
+    "Recent activity is available in the thread."
+  );
+
+  const whyParts = [
+    thread.replyState?.needsReply
+      ? thread.replyState.isOverdue
+        ? "A reply is overdue based on deterministic reply-state scoring."
+        : "Deterministic reply-state scoring says a response is still owed."
+      : null,
+    thread.replyState?.waitingOnThem
+      ? "The thread is waiting on the other side, so a follow-up matters more than a fresh reply."
+      : null,
+    thread.unreadCount > 0
+      ? `${thread.unreadCount} message${thread.unreadCount === 1 ? "" : "s"} in this thread are still unread.`
+      : null,
+    pendingFollowUp ? `There is already a follow-up task due ${pendingFollowUp.dueAt.toISOString()}.` : null,
+    thread.mailbox.role !== "PERSONAL" ? `This lives in a ${thread.mailbox.role.toLowerCase()} mailbox.` : null
+  ].filter(Boolean);
+
+  const whyItMatters = whyParts.join(" ") || "The thread has structured context available, but no urgent signal is currently active.";
+
+  const suggestedNextStep =
+    thread.replyState?.needsReply
+      ? {
+          action: "reply",
+          label: thread.replyState.isOverdue ? "Send a concise reply now" : "Draft a reply for review",
+          rationale: thread.replyState.reason
+        }
+      : thread.replyState?.waitingOnThem
+        ? {
+            action: "follow_up",
+            label: pendingFollowUp ? "Review the scheduled follow-up" : "Set a reminder and follow up later",
+            rationale: thread.replyState.reason
+          }
+        : thread.archivedAt
+          ? {
+              action: "unarchive",
+              label: "Restore the thread only if it needs active work",
+              rationale: "The thread is already cleared from active queues."
+            }
+          : {
+              action: "review",
+              label: "Review the latest message and decide if the thread can be archived",
+              rationale: "No deterministic urgency signal is currently active."
+            };
+
+  const followUpSignal = {
+    status: pendingFollowUp
+      ? "FOLLOW_UP_SCHEDULED"
+      : thread.replyState?.needsReply
+        ? "REPLY_NEEDED"
+        : thread.replyState?.waitingOnThem
+          ? "WAITING_ON_THEM"
+          : "NO_ACTIVE_SIGNAL",
+    replyDueAt: thread.replyState?.replyDueAt ?? null,
+    staleAt: thread.replyState?.staleAt ?? null,
+    suggestedFollowUpAt: thread.replyState?.suggestedFollowUpAt ?? null,
+    pendingTaskCount: thread.followUpTasks.length,
+    nextFollowUpTask: pendingFollowUp ? serializePendingFollowUp(pendingFollowUp) : null
+  };
+
+  const replyContext = latestInboundMessage?.bodyPreview || latestMessage?.bodyPreview || thread.subject;
+  const conciseDraft = `Hi ${counterpartName.split(" ")[0]},\n\nThanks for the update on ${thread.subject || "this thread"}. I reviewed the latest details and will take the next step from here.\n\n${replyContext ? `My read on the latest point: ${clipSentence(replyContext, "", 120)}\n\n` : ""}Best,\n${thread.mailbox.displayName}`;
+  const actionDraft = `Hi ${counterpartName.split(" ")[0]},\n\nFollowing up on ${thread.subject || "this thread"}.\n\n${thread.replyState?.needsReply ? "Here is the next step we can take:" : "I wanted to check where this stands:"} ${thread.replyState?.reason || "I reviewed the thread context and want to keep it moving."}\n\nIf helpful, I can send over a tighter update once you confirm timing.\n\nBest,\n${thread.mailbox.displayName}`;
+  const followUpDueAt = pendingFollowUp?.dueAt ?? thread.replyState?.suggestedFollowUpAt ?? addHours(new Date(), settings.workflows.followUpSlaHours);
+
+  return {
+    assistant: {
+      threadId: thread.id,
+      generationMode: "DETERMINISTIC_TEMPLATE_ROUTED",
+      modelRouting: {
+        category: publicModels.enrichmentSource.category,
+        providerId: publicModels.enrichmentSource.providerId,
+        baseUrl: publicModels.enrichmentSource.baseUrl,
+        defaultModel: publicModels.enrichmentSource.defaultModel,
+        routingMode: publicModels.enrichmentSource.routingMode,
+        analyticsMode: publicModels.analyticsMode,
+        hasApiToken: publicModels.enrichmentSource.hasApiToken ?? false,
+        oauthStatus: publicModels.enrichmentSource.oauthStatus ?? null,
+        oauthAccountLabel: publicModels.enrichmentSource.oauthAccountLabel ?? null,
+        deterministicAnalyticsIndependent: true
+      },
+      groundedThreadIntelligence: {
+        conciseSummary,
+        whyItMatters,
+        suggestedNextStep,
+        followUpSignal,
+        draftVariants: [
+          {
+            id: "concise-reply",
+            label: "Concise reply",
+            tone: "direct",
+            body: conciseDraft
+          },
+          {
+            id: "next-step-reply",
+            label: "Next-step reply",
+            tone: "collaborative",
+            body: actionDraft
+          }
+        ],
+        draftSuggestions: [
+          thread.replyState?.needsReply
+            ? "Acknowledge the latest inbound message, answer the open point, and propose the next step."
+            : "Confirm whether a reply is needed before sending anything new.",
+          thread.mailbox.role !== "PERSONAL"
+            ? "Keep the wording easy for a shared mailbox teammate to inherit."
+            : "Keep the wording compact and decision-oriented.",
+          `If no reply is sent, schedule a reminder for ${followUpDueAt.toISOString()}.`
+        ],
+        context: {
+          subject: thread.subject,
+          mailbox: serializeMailbox(thread.mailbox),
+          primaryOrganization: organization
+            ? {
+                id: organization.id,
+                name: organization.name,
+                kind: organization.kind,
+                primaryDomain: organization.primaryDomain
+              }
+            : null,
+          primaryContact: primaryExternalParticipant
+            ? {
+                emailAddress: primaryExternalParticipant.emailAddress,
+                displayName: primaryExternalParticipant.displayName,
+                roleTitle: contact?.roleTitle ?? null
+              }
+            : null,
+          latestInboundAt: latestInboundMessage?.receivedAt ?? null,
+          latestOutboundAt: latestOutboundMessage?.receivedAt ?? null,
+          unreadCount: thread.unreadCount,
+          archivedAt: thread.archivedAt
+        }
+      },
+      threadStatus: serializeThreadStatus({
+        id: thread.id,
+        mailboxId: thread.mailboxId,
+        subject: thread.subject,
+        unreadCount: thread.unreadCount,
+        archivedAt: thread.archivedAt,
+        lastMessageAt: thread.lastMessageAt,
+        mailbox: thread.mailbox,
+        replyState: thread.replyState,
+        followUpTasks: thread.followUpTasks,
+        messages: latestMessage ? [latestMessage] : []
+      })
+    }
+  };
+}
+
 export async function registerThreadRoutes(app: FastifyInstance) {
   app.get("/v1/threads", async (request) => {
     const query = z
       .object({
         mailboxId: z.string().cuid().optional(),
-        limit: z.coerce.number().int().min(1).max(100).optional()
+        limit: z.coerce.number().int().min(1).max(100).optional(),
+        includeArchived: z.coerce.boolean().optional()
       })
       .parse(request.query);
 
-    const threads = await getThreadList(query.mailboxId, query.limit ?? 40);
+    const threads = await getThreadList(query.mailboxId, query.limit ?? 40, query.includeArchived ?? false);
 
     return {
       threads: threads.map(serializeThread)
@@ -542,11 +1016,12 @@ export async function registerThreadRoutes(app: FastifyInstance) {
     const query = z
       .object({
         mailboxId: z.string().cuid().optional(),
-        limit: z.coerce.number().int().min(1).max(100).optional()
+        limit: z.coerce.number().int().min(1).max(100).optional(),
+        includeArchived: z.coerce.boolean().optional()
       })
       .parse(request.query);
 
-    return getWorkbenchData(query.mailboxId, query.limit ?? 24);
+    return getWorkbenchData(query.mailboxId, query.limit ?? 24, query.includeArchived ?? false);
   });
 
   app.get("/v1/analytics/organizations/activity", async (request) => {
@@ -568,41 +1043,7 @@ export async function registerThreadRoutes(app: FastifyInstance) {
       })
       .parse(request.params);
 
-    const thread = await prisma.thread.findUnique({
-      where: {
-        id: params.threadId
-      },
-      include: {
-        mailbox: true,
-        replyState: true,
-        participantsExpanded: {
-          include: {
-            contact: {
-              include: {
-                emailAddresses: true
-              }
-            },
-            organization: true
-          }
-        },
-        followUpTasks: {
-          where: {
-            status: FollowUpTaskStatus.PENDING
-          },
-          orderBy: {
-            dueAt: "asc"
-          }
-        },
-        messages: {
-          orderBy: {
-            receivedAt: "asc"
-          },
-          include: {
-            category: true
-          }
-        }
-      }
-    });
+    const thread = await getThreadDetailRecord(params.threadId);
 
     if (!thread) {
       return reply.status(404).send({
@@ -610,89 +1051,219 @@ export async function registerThreadRoutes(app: FastifyInstance) {
       });
     }
 
-    return {
-      thread: {
-        id: thread.id,
-        subject: thread.subject,
-        participants: thread.participants,
-        unreadCount: thread.unreadCount,
-        lastMessageAt: thread.lastMessageAt,
-        mailbox: {
-          id: thread.mailbox.id,
-          displayName: thread.mailbox.displayName,
-          emailAddress: thread.mailbox.emailAddress,
-          kind: thread.mailbox.kind,
-          role: thread.mailbox.role
+    return serializeThreadDetail(thread);
+  });
+
+  app.get("/v1/threads/:threadId/assistant", async (request, reply) => {
+    const params = z
+      .object({
+        threadId: z.string().cuid()
+      })
+      .parse(request.params);
+
+    const thread = await getThreadDetailRecord(params.threadId);
+
+    if (!thread) {
+      return reply.status(404).send({
+        error: "Thread not found."
+      });
+    }
+
+    return buildAssistantPayload(thread);
+  });
+
+  app.post("/v1/threads/:threadId/actions/mark-read", async (request, reply) => {
+    const params = z
+      .object({
+        threadId: z.string().cuid()
+      })
+      .parse(request.params);
+
+    const existing = await requireThreadStatus(params.threadId, reply);
+    if (!existing) {
+      return;
+    }
+
+    await prisma.$transaction([
+      prisma.message.updateMany({
+        where: {
+          threadId: params.threadId,
+          isRead: false
         },
-        replyState: thread.replyState
-          ? {
-              status: thread.replyState.status,
-              reason: thread.replyState.reason,
-              confidence: thread.replyState.confidence,
-              needsReply: thread.replyState.needsReply,
-              waitingOnThem: thread.replyState.waitingOnThem,
-              replyDueAt: thread.replyState.replyDueAt,
-              staleAt: thread.replyState.staleAt,
-              suggestedFollowUpAt: thread.replyState.suggestedFollowUpAt,
-              isOverdue: thread.replyState.isOverdue
-            }
-          : null,
-        people: thread.participantsExpanded.map((participant) => ({
-          id: participant.id,
-          emailAddress: participant.emailAddress,
-          displayName: participant.displayName,
-          isMailbox: participant.isMailbox,
-          isSharedMailbox: participant.isSharedMailbox,
-          organization: participant.organization
-            ? {
-                id: participant.organization.id,
-                name: participant.organization.name,
-                kind: participant.organization.kind,
-                primaryDomain: participant.organization.primaryDomain
-              }
-            : null,
-          contact: participant.contact
-            ? {
-                id: participant.contact.id,
-                displayName: participant.contact.displayName,
-                roleTitle: participant.contact.roleTitle,
-                isMailboxOwner: participant.contact.isMailboxOwner,
-                emailAddresses: participant.contact.emailAddresses.map((emailAddress) => emailAddress.emailAddress)
-              }
-            : null
-        })),
-        followUpTasks: thread.followUpTasks.map((task) => ({
-          id: task.id,
-          title: task.title,
-          note: task.note,
-          dueAt: task.dueAt,
-          status: task.status
-        })),
-        messages: thread.messages.map((message) => ({
-          id: message.id,
-          subject: message.subject,
-          fromName: message.fromName,
-          fromAddress: message.fromAddress,
-          toRecipients: message.toRecipients,
-          ccRecipients: message.ccRecipients,
-          receivedAt: message.receivedAt,
-          sentAt: message.sentAt,
-          bodyPreview: message.bodyPreview,
-          bodyText: message.bodyText,
-          bodyHtml: message.bodyHtml,
-          webLink: message.webLink,
-          isRead: message.isRead,
-          hasAttachments: message.hasAttachments,
-          importance: message.importance,
-          category: message.category
-            ? {
-                label: message.category.label,
-                confidence: message.category.confidence,
-                source: message.category.source
-              }
-            : null
-        }))
+        data: {
+          isRead: true
+        }
+      }),
+      prisma.thread.update({
+        where: {
+          id: params.threadId
+        },
+        data: {
+          unreadCount: 0
+        }
+      })
+    ]);
+
+    const thread = await requireThreadStatus(params.threadId, reply);
+    if (!thread) {
+      return;
+    }
+
+    return {
+      thread: serializeThreadStatus(thread)
+    };
+  });
+
+  app.post("/v1/threads/:threadId/actions/mark-unread", async (request, reply) => {
+    const params = z
+      .object({
+        threadId: z.string().cuid()
+      })
+      .parse(request.params);
+
+    const detail = await getThreadDetailRecord(params.threadId);
+    if (!detail) {
+      return reply.status(404).send({
+        error: "Thread not found."
+      });
+    }
+
+    await prisma.$transaction([
+      prisma.message.updateMany({
+        where: {
+          threadId: params.threadId,
+          isRead: true
+        },
+        data: {
+          isRead: false
+        }
+      }),
+      prisma.thread.update({
+        where: {
+          id: params.threadId
+        },
+        data: {
+          unreadCount: detail.messages.length
+        }
+      })
+    ]);
+
+    const thread = await requireThreadStatus(params.threadId, reply);
+    if (!thread) {
+      return;
+    }
+
+    return {
+      thread: serializeThreadStatus(thread)
+    };
+  });
+
+  app.post("/v1/threads/:threadId/actions/archive", async (request, reply) => {
+    const params = z
+      .object({
+        threadId: z.string().cuid()
+      })
+      .parse(request.params);
+
+    const existing = await requireThreadStatus(params.threadId, reply);
+    if (!existing) {
+      return;
+    }
+
+    await prisma.thread.update({
+      where: {
+        id: params.threadId
+      },
+      data: {
+        archivedAt: new Date()
       }
+    });
+
+    const thread = await requireThreadStatus(params.threadId, reply);
+    if (!thread) {
+      return;
+    }
+
+    return {
+      thread: serializeThreadStatus(thread)
+    };
+  });
+
+  app.post("/v1/threads/:threadId/actions/unarchive", async (request, reply) => {
+    const params = z
+      .object({
+        threadId: z.string().cuid()
+      })
+      .parse(request.params);
+
+    const existing = await requireThreadStatus(params.threadId, reply);
+    if (!existing) {
+      return;
+    }
+
+    await prisma.thread.update({
+      where: {
+        id: params.threadId
+      },
+      data: {
+        archivedAt: null
+      }
+    });
+
+    const thread = await requireThreadStatus(params.threadId, reply);
+    if (!thread) {
+      return;
+    }
+
+    return {
+      thread: serializeThreadStatus(thread)
+    };
+  });
+
+  app.post("/v1/threads/:threadId/actions/follow-up", async (request, reply) => {
+    const params = z
+      .object({
+        threadId: z.string().cuid()
+      })
+      .parse(request.params);
+    const body = z
+      .object({
+        dueAt: z.coerce.date(),
+        title: z.string().trim().min(1).max(160).optional(),
+        note: z.string().trim().max(1000).optional()
+      })
+      .parse(request.body);
+
+    const thread = await getThreadDetailRecord(params.threadId);
+    if (!thread) {
+      return reply.status(404).send({
+        error: "Thread not found."
+      });
+    }
+
+    const primaryExternalParticipant = thread.participantsExpanded.find((participant) => !participant.isMailbox) ?? null;
+    const followUpTask = await prisma.followUpTask.create({
+      data: {
+        threadId: thread.id,
+        mailboxId: thread.mailboxId,
+        organizationId: primaryExternalParticipant?.organizationId ?? null,
+        contactId: primaryExternalParticipant?.contactId ?? null,
+        source: FollowUpTaskSource.MANUAL,
+        title: body.title ?? `Follow up on ${thread.subject || "thread"}`,
+        note: body.note?.trim() || null,
+        dueAt: body.dueAt,
+        status: FollowUpTaskStatus.PENDING
+      }
+    });
+
+    const updatedThread = await requireThreadStatus(params.threadId, reply);
+    if (!updatedThread) {
+      return;
+    }
+
+    return {
+      thread: serializeThreadStatus(updatedThread),
+      followUpTask: serializePendingFollowUp(followUpTask)
     };
   });
 }

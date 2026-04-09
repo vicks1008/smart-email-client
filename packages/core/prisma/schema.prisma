@@ -198,6 +198,7 @@ model Thread {
   participants           Json
   unreadCount            Int        @default(0)
   lastMessageAt          DateTime
+  archivedAt             DateTime?
   createdAt              DateTime   @default(now())
   updatedAt              DateTime   @updatedAt
   mailbox                Mailbox    @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
@@ -209,6 +210,7 @@ model Thread {
 
   @@unique([mailboxId, externalConversationId])
   @@index([mailboxId, lastMessageAt(sort: Desc)])
+  @@index([mailboxId, archivedAt, lastMessageAt(sort: Desc)])
 }
 
 model Message {
