@@ -1596,7 +1596,7 @@ export function MailApp() {
                       <span className="soft-tag">{selectedThunderbirdMessage.accountName ?? "Mail.app"}</span>
                     </div>
 
-                  <div className="reader-card live-message-card">
+                    <div className="reader-card live-message-card reply-flow-card">
                       <div className="message-card mail-message">
                         <div className="message-card-head">
                           <div>
@@ -1607,61 +1607,62 @@ export function MailApp() {
                         </div>
                         <p>{selectedThunderbirdMessage.body || "(empty message)"}</p>
                       </div>
-                    </div>
-
-                    <div className="reply-suggestions" data-testid="live-reply-suggestions">
-                      {liveReplySuggestions.map((label) => (
-                        <button key={label} className="reply-suggestion" onClick={() => setDraftText(label)} type="button">
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="reader-card composer-card inline-composer-card">
-                      <div className="composer-shell">
-                        <div className="composer-envelope compact">
-                          <span>Reply</span>
-                          <strong>{selectedThunderbirdMessage.author}</strong>
-                          <span className="composer-divider" aria-hidden="true" />
-                          <span>{selectedThunderbirdMessage.accountName ?? "Mail.app"}</span>
-                        </div>
-                        <div className="template-row">
+                      <div className="message-reply-zone">
+                        <div className="reply-suggestions" data-testid="live-reply-suggestions">
                           {liveReplySuggestions.map((label) => (
-                            <button
-                              key={label}
-                              className="template-pill"
-                              onClick={() => setDraftText(label)}
-                              type="button"
-                            >
+                            <button key={label} className="reply-suggestion" onClick={() => setDraftText(label)} type="button">
                               {label}
                             </button>
                           ))}
                         </div>
-                        <textarea
-                          className="draft-pad"
-                          value={draftText}
-                          onChange={(event) => setDraftText(event.target.value)}
-                          placeholder="Write a reply..."
-                        />
-                        <div className="composer-toolbar">
-                          <div className="composer-meta">
-                            <span className="soft-tag">Live draft</span>
+
+                        <div className="inline-composer-panel">
+                          <div className="composer-shell">
+                            <div className="composer-envelope compact">
+                              <span>Reply</span>
+                              <strong>{selectedThunderbirdMessage.author}</strong>
+                              <span className="composer-divider" aria-hidden="true" />
+                              <span>{selectedThunderbirdMessage.accountName ?? "Mail.app"}</span>
+                            </div>
+                            <div className="template-row">
+                              {liveReplySuggestions.map((label) => (
+                                <button
+                                  key={label}
+                                  className="template-pill"
+                                  onClick={() => setDraftText(label)}
+                                  type="button"
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                            <textarea
+                              className="draft-pad"
+                              value={draftText}
+                              onChange={(event) => setDraftText(event.target.value)}
+                              placeholder="Write a reply..."
+                            />
+                            <div className="composer-toolbar">
+                              <div className="composer-meta">
+                                <span className="soft-tag">Live draft</span>
+                              </div>
+                              <div className="composer-actions">
+                                <button className="client-button tertiary" type="button">
+                                  Send later
+                                </button>
+                                <button className="client-button tertiary" type="button">
+                                  Remind me
+                                </button>
+                                <button className="client-button primary" type="button">
+                                  Send
+                                </button>
+                              </div>
+                            </div>
+                            <div className="composer-footer-note">
+                              <span>ai</span>
+                              <p>Drafted in your voice from live context.</p>
+                            </div>
                           </div>
-                          <div className="composer-actions">
-                            <button className="client-button tertiary" type="button">
-                              Send later
-                            </button>
-                            <button className="client-button tertiary" type="button">
-                              Remind me
-                            </button>
-                            <button className="client-button primary" type="button">
-                              Send
-                            </button>
-                          </div>
-                        </div>
-                        <div className="composer-footer-note">
-                          <span>ai</span>
-                          <p>Drafted in your voice from live context.</p>
                         </div>
                       </div>
                     </div>
@@ -1771,7 +1772,7 @@ export function MailApp() {
                     ) : null}
                   </div>
 
-                  <div className="reader-card conversation-card">
+                  <div className="reader-card conversation-card reply-flow-card">
                     {earlierThreadMessages.length ? (
                       <div className="thread-history-list">
                         {earlierThreadMessages.map((message) => (
@@ -1804,64 +1805,66 @@ export function MailApp() {
                         <p>{latestThreadMessage.bodyText || latestThreadMessage.bodyPreview || "(empty message)"}</p>
                       </article>
                     ) : null}
-                  </div>
 
-                  <div className="reply-suggestions" data-testid="archive-reply-suggestions">
-                    {archiveReplySuggestions.map((label) => (
-                      <button key={label} className="reply-suggestion" onClick={() => setDraftText(label)} type="button">
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-
-                    <div className="reader-card composer-card inline-composer-card">
-                      <div className="composer-shell">
-                        <div className="composer-envelope compact">
-                          <span>Reply</span>
-                          <strong>{selectedPerson?.displayName ?? selectedPersonEmail ?? "recipient"}</strong>
-                          <span className="composer-divider" aria-hidden="true" />
-                          <span>{selectedThread.mailbox.displayName}</span>
-                        </div>
-                      <div className="template-row">
-                        {draftTemplates.map((template) => (
-                          <button
-                            key={template.id}
-                            className="template-pill"
-                            onClick={() => setDraftText(template.body)}
-                            type="button"
-                          >
-                            {template.label}
+                    <div className="message-reply-zone">
+                      <div className="reply-suggestions" data-testid="archive-reply-suggestions">
+                        {archiveReplySuggestions.map((label) => (
+                          <button key={label} className="reply-suggestion" onClick={() => setDraftText(label)} type="button">
+                            {label}
                           </button>
                         ))}
                       </div>
-                      <textarea
-                        className="draft-pad"
-                        value={draftText}
-                        onChange={(event) => setDraftText(event.target.value)}
-                        placeholder="Write a reply..."
-                        data-testid="draft-pad"
-                      />
-                      <div className="composer-toolbar">
-                        <div className="composer-meta">
-                          <span className="soft-tag">Draft</span>
+
+                      <div className="inline-composer-panel">
+                        <div className="composer-shell">
+                          <div className="composer-envelope compact">
+                            <span>Reply</span>
+                            <strong>{selectedPerson?.displayName ?? selectedPersonEmail ?? "recipient"}</strong>
+                            <span className="composer-divider" aria-hidden="true" />
+                            <span>{selectedThread.mailbox.displayName}</span>
+                          </div>
+                          <div className="template-row">
+                            {draftTemplates.map((template) => (
+                              <button
+                                key={template.id}
+                                className="template-pill"
+                                onClick={() => setDraftText(template.body)}
+                                type="button"
+                              >
+                                {template.label}
+                              </button>
+                            ))}
+                          </div>
+                          <textarea
+                            className="draft-pad"
+                            value={draftText}
+                            onChange={(event) => setDraftText(event.target.value)}
+                            placeholder="Write a reply..."
+                            data-testid="draft-pad"
+                          />
+                          <div className="composer-toolbar">
+                            <div className="composer-meta">
+                              <span className="soft-tag">Draft</span>
+                            </div>
+                            <div className="composer-actions">
+                              <button className="client-button tertiary" onClick={() => void copyDraft()} type="button">
+                                <Copy size={16} />
+                                Copy
+                              </button>
+                              <button className="client-button tertiary" type="button">
+                                Send later
+                              </button>
+                              <button className="client-button primary" type="button">
+                                <SendHorizontal size={16} />
+                                Send
+                              </button>
+                            </div>
+                          </div>
+                          <div className="composer-footer-note">
+                            <span>ai</span>
+                            <p>Trained on your sent mail, templates, and account context.</p>
+                          </div>
                         </div>
-                        <div className="composer-actions">
-                          <button className="client-button tertiary" onClick={() => void copyDraft()} type="button">
-                            <Copy size={16} />
-                            Copy
-                          </button>
-                          <button className="client-button tertiary" type="button">
-                            Send later
-                          </button>
-                          <button className="client-button primary" type="button">
-                            <SendHorizontal size={16} />
-                            Send
-                          </button>
-                        </div>
-                      </div>
-                      <div className="composer-footer-note">
-                        <span>ai</span>
-                        <p>Trained on your sent mail, templates, and account context.</p>
                       </div>
                     </div>
                   </div>
