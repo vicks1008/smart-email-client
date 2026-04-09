@@ -1676,6 +1676,11 @@ body {
   padding: 9px 12px;
 }
 
+.client-topbar.utility .topbar-copy .eyebrow,
+.client-topbar.utility .topbar-copy p {
+  display: none;
+}
+
 .topbar-copy h2 {
   font-size: clamp(1.18rem, 2vw, 1.48rem);
 }
@@ -1688,6 +1693,10 @@ body {
 .client-topbar.utility .topbar-copy p {
   max-width: 320px;
   font-size: 0.8rem;
+}
+
+.topbar-meta-row {
+  margin-top: 6px;
 }
 
 .client-search,
@@ -1707,12 +1716,12 @@ body {
 }
 
 .mail-grid {
-  grid-template-columns: 318px minmax(0, 1fr) 248px;
+  grid-template-columns: 300px minmax(0, 1fr) 230px;
   gap: 12px;
 }
 
 .mail-grid.no-inspector {
-  grid-template-columns: 318px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
 }
 
 .thread-pane,
@@ -1770,6 +1779,19 @@ body {
 .thread-row-subject {
   margin: 6px 0 3px;
   font-size: 0.92rem;
+}
+
+.thread-row-aside {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thread-row-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #f1ac89, #86abd8);
 }
 
 .thread-row p {
@@ -2046,6 +2068,12 @@ body {
   margin-top: 14px;
 }
 
+.profile-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(130, 108, 86, 0.08);
+}
+
 .profile-detail-row,
 .profile-followup-row {
   border-radius: 14px;
@@ -2139,7 +2167,7 @@ body {
 
 .client-app[data-workspace="inbox"] .topbar-copy h2,
 .client-app[data-workspace="live"] .topbar-copy h2 {
-  font-size: 1.14rem;
+  font-size: 1rem;
 }
 
 .client-app[data-workspace="inbox"] .reader-pane,
@@ -2154,11 +2182,11 @@ body {
 
 @media (max-width: 1460px) {
   .mail-grid {
-    grid-template-columns: 296px minmax(0, 1fr) 228px;
+    grid-template-columns: 284px minmax(0, 1fr) 214px;
   }
 
   .mail-grid.no-inspector {
-    grid-template-columns: 296px minmax(0, 1fr);
+    grid-template-columns: 284px minmax(0, 1fr);
   }
 }
 

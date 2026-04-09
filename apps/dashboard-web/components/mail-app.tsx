@@ -991,6 +991,16 @@ export function MailApp() {
     workspaceView === "accounts" ||
     workspaceView === "analytics" ||
     (workspaceView === "live" ? Boolean(selectedThunderbirdMessage) : Boolean(selectedThread));
+  const topbarContextLabel =
+    workspaceView === "inbox"
+      ? inboxQueue === "needsReply"
+        ? `${filteredNeedsReply.length} in queue`
+        : inboxQueue === "waitingOnThem"
+          ? `${filteredWaiting.length} waiting`
+          : `${allArchiveThreads.length} threads`
+      : workspaceView === "live"
+        ? `${selectedThunderbirdAccount?.name ?? "Mail.app"} · ${liveHeaderName}`
+        : null;
 
   return (
     <main className="client-shell">
@@ -1051,6 +1061,7 @@ export function MailApp() {
               <div className="eyebrow">Actionable workspace</div>
               <h2>{workspaceTitle}</h2>
               <p>{workspaceCopy}</p>
+              {topbarContextLabel ? <div className="topbar-meta-row"><span className="soft-tag">{topbarContextLabel}</span></div> : null}
             </div>
 
             <div className="topbar-tools">
@@ -1193,7 +1204,7 @@ export function MailApp() {
                           data-testid={`thread-row-${thread.id}`}
                         >
                           <div className="thread-row-top">
-                            <div className="thread-row-identity">
+                          <div className="thread-row-identity">
                               <div className="avatar-badge">
                                 {monogram(thread.primaryOrganization?.name ?? thread.latestMessage?.fromName ?? thread.subject)}
                               </div>
@@ -1204,14 +1215,16 @@ export function MailApp() {
                                 </span>
                               </div>
                             </div>
-                            <span>{formatShortDate(thread.replyState?.replyDueAt ?? thread.lastMessageAt)}</span>
+                            <div className="thread-row-aside">
+                              <span>{formatShortDate(thread.replyState?.replyDueAt ?? thread.lastMessageAt)}</span>
+                              {thread.unreadCount > 0 ? <span className="thread-row-dot" aria-hidden="true" /> : null}
+                            </div>
                           </div>
                           <div className="thread-row-subject">{thread.subject}</div>
                           <p>{thread.latestMessage?.bodyPreview ?? "No preview yet."}</p>
                           <div className="thread-row-meta">
                             <span className={`status-tag ${replyTone(thread.replyState)}`}>{replyLabel(thread.replyState)}</span>
                             {thread.latestCategory ? <span className="soft-tag">{categoryLabel(thread.latestCategory)}</span> : null}
-                            {thread.unreadCount > 0 ? <span className="count-tag">{thread.unreadCount}</span> : null}
                           </div>
                         </button>
                       ))
@@ -1420,20 +1433,23 @@ export function MailApp() {
                           }}
                         >
                           <div className="thread-row-top">
-                            <div className="thread-row-identity">
+                          <div className="thread-row-identity">
                               <div className="avatar-badge">{monogram(message.author)}</div>
                               <div className="thread-row-title-group">
                                 <strong>{message.author}</strong>
                                 <span className="thread-row-kicker">{message.folder}</span>
                               </div>
                             </div>
-                            <span>{formatShortDate(message.date)}</span>
+                            <div className="thread-row-aside">
+                              <span>{formatShortDate(message.date)}</span>
+                              {!message.read ? <span className="thread-row-dot" aria-hidden="true" /> : null}
+                            </div>
                           </div>
                           <div className="thread-row-subject">{message.subject || "(no subject)"}</div>
                           <p>{message.recipients}</p>
                           <div className="thread-row-meta">
                             <span className="soft-tag">{message.folder}</span>
-                            <span className="soft-tag">{message.read ? "read" : "unread"}</span>
+                            {!message.read ? <span className="soft-tag">unread</span> : null}
                           </div>
                         </button>
                       ))
@@ -1911,30 +1927,23 @@ export function MailApp() {
                         ))}
                       </div>
                     ) : null}
-                  </div>
 
-                  <div className="inspector-card profile-support-card">
-                    <div className="pane-header">
-                      <div>
-                        <div className="eyebrow">People in thread</div>
-                        <h3>Participants</h3>
-                      </div>
-                      <Users size={18} />
-                    </div>
-
-                    <div className="profile-followup-list">
-                      {selectedThread.people.map((person) => (
-                        <div key={person.id} className="profile-followup-row">
-                          <div>
-                            <strong>{person.displayName ?? person.emailAddress}</strong>
-                            <div className="subtle-line">
-                              {person.organization?.name ?? person.emailAddress}
-                              {person.contact?.roleTitle ? ` · ${person.contact.roleTitle}` : ""}
+                    <div className="profile-section">
+                      <div className="eyebrow">Participants</div>
+                      <div className="profile-followup-list">
+                        {selectedThread.people.map((person) => (
+                          <div key={person.id} className="profile-followup-row">
+                            <div>
+                              <strong>{person.displayName ?? person.emailAddress}</strong>
+                              <div className="subtle-line">
+                                {person.organization?.name ?? person.emailAddress}
+                                {person.contact?.roleTitle ? ` · ${person.contact.roleTitle}` : ""}
+                              </div>
                             </div>
+                            <span className="soft-tag">{person.isMailbox ? "mailbox" : "contact"}</span>
                           </div>
-                          <span className="soft-tag">{person.isMailbox ? "mailbox" : "contact"}</span>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </>
