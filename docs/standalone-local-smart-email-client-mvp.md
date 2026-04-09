@@ -84,6 +84,9 @@ Recommended provider strategy:
 - `OpenAI GPT-5.4` for highest-quality reasoning and drafting
 - `Groq` for fast hosted open-weight inference
 - `Ollama` for truly local models without API spend
+- `LM Studio` and other local OpenAI-compatible endpoints for local model routing
+- `Cloud API token` providers for hosted models when desired
+- `OAuth-connected assistants` such as ChatGPT or Codex when supported
 
 Recommended local model tiers:
 
@@ -97,7 +100,50 @@ Routing modes:
 - `Auto`
 - forced manual model selection
 
-The provider/model selector should be exposed in the product once the deterministic analytics path is stable.
+The provider/model selector should be exposed in the product through `Settings`, and the product should treat this as a first-class requirement rather than an implementation detail.
+
+## Settings Requirements
+
+The app now explicitly needs a `Settings` area with at least:
+
+- `Settings -> Accounts`
+- `Settings -> Models`
+- `Settings -> Workflows`
+
+`Settings -> Models` must include a `Model source for enrichment` field.
+
+That field should support:
+
+- `Local LLM provider`
+  Examples: `Ollama`, `LM Studio`, and compatible local endpoints
+- `Cloud API token`
+  Examples: OpenAI API, Groq API, Anthropic API, OpenRouter, or similar token-based providers
+- `OAuth`
+  Examples: `ChatGPT`, `Codex`, or future OAuth-based assistant integrations
+
+The user should be able to configure:
+
+- provider type
+- base URL when applicable
+- API token when applicable
+- OAuth connection when applicable
+- default model
+- routing mode for enrichment and drafting
+
+The system should keep deterministic analytics independent from model choice. The selected model source should affect:
+
+- enrichment
+- drafting
+- template suggestions
+- voice adaptation
+- summarization
+
+It should not affect:
+
+- deterministic activity analytics
+- contact and organization counts
+- mailbox sync state
+- basic operational reporting
 
 ## Initial API Surface
 
@@ -123,6 +169,7 @@ The provider/model selector should be exposed in the product once the determinis
 /automations
 /settings/models
 /settings/accounts
+/settings/workflows
 ```
 
 ## Phase Order
@@ -130,9 +177,29 @@ The provider/model selector should be exposed in the product once the determinis
 1. mailbox ingestion and normalization
 2. organization, contact, category, reply-state, and follow-up intelligence
 3. deterministic analytics and workbench views
-4. natural-language query routing over structured data
-5. drafting, template mining, and voice learning
-6. write/send workflows and polished assistant UX
+4. Superhuman-style mail workspace polish and settings surface
+5. natural-language query routing over structured data
+6. drafting, template mining, and voice learning
+7. write/send workflows and polished assistant UX
+
+## Current Handoff Phase
+
+`Phase 4: Workspace Polish + Model Settings`
+
+This phase should preserve two goals at the same time:
+
+- keep pushing `/mail` toward a Superhuman-like desktop client
+- add a first-class settings surface so model-source choice is part of the product, not hidden configuration
+
+The active design/product goals for this phase are:
+
+- continue tightening the `/mail` workspace toward a Superhuman-style interaction model
+- keep live and archive reading/responding visually aligned
+- preserve deterministic analytics as the foundation for intelligence
+- add `Settings` with `Model source for enrichment`
+- support local LLM providers such as `LM Studio`, `Ollama`, and similar local endpoints
+- support cloud API-token providers
+- support OAuth-based assistant connections such as `ChatGPT` / `Codex` when feasible
 
 ## Current Direction
 

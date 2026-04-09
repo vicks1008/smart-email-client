@@ -1,0 +1,142 @@
+# Phase 4 Handoff
+
+## Label
+
+`Phase 4: Workspace Polish + Model Settings`
+
+## Why this phase exists
+
+This phase is the bridge between:
+
+- a working local-first mailbox intelligence product
+- and a polished AI email client in the direction of Superhuman, Fyxer, and Shortwave
+
+The product should not drift back toward being just a mailbox viewer or just an API integration demo.
+
+## Current product intent
+
+The active product target is:
+
+- a Superhuman-style desktop email experience
+- deterministic mailbox intelligence first
+- assistant workflows on top of structured data
+- configurable model-source routing through a first-class `Settings` area
+
+## Non-negotiable goals
+
+- keep pushing `/mail` toward a Superhuman-like interaction model
+- keep the UI keyboard-first and fast-scanning
+- preserve deterministic analytics as the source of truth for operational questions
+- keep shared mailbox support first-class
+- add a real `Settings` surface
+- add `Model source for enrichment` as an explicit settings field
+
+## Model-source requirement
+
+The app needs a `Settings -> Models` area with a `Model source for enrichment` field.
+
+That field should support:
+
+- `Local provider`
+  Examples:
+  - `Ollama`
+  - `LM Studio`
+  - any local OpenAI-compatible endpoint
+- `Cloud API token`
+  Examples:
+  - OpenAI API
+  - Groq API
+  - Anthropic API
+  - OpenRouter
+- `OAuth-connected assistant`
+  Examples:
+  - `ChatGPT`
+  - `Codex`
+  - future OAuth-based assistant products
+
+The user should be able to configure:
+
+- provider type
+- base URL when needed
+- API token when needed
+- OAuth connection when supported
+- default model
+- routing mode (`Auto` vs explicit model/provider)
+
+## What the selected model source should affect
+
+- enrichment
+- drafting
+- summarization
+- template suggestions
+- voice adaptation
+- assistant workflow output
+
+## What it should not affect
+
+- deterministic mailbox analytics
+- contact and organization counting
+- reply-state storage
+- follow-up task persistence
+- sync and mailbox ingestion state
+
+## Current UI direction
+
+The current `/mail` work has already been moving toward:
+
+- denser thread lists
+- quieter utility chrome
+- stronger selected-row to reader connection
+- a latest-message-first reader hierarchy
+- an inline reply surface
+- lighter command-style action cues
+
+The next likely UI moves are:
+
+1. continue reducing visual weight in the utility bar
+2. tighten remaining pill/tag usage
+3. improve motion and transition feel for active rows and reply actions
+4. add more keyboard-first affordances without making the UI noisy
+5. add `Settings` as a first-class area in the app shell
+
+## Suggested next implementation order
+
+1. add `Settings` navigation entry
+2. scaffold `/settings/models`, `/settings/accounts`, and `/settings/workflows`
+3. implement `Model source for enrichment` UI and persistence
+4. define provider config schema for local, API-token, and OAuth sources
+5. continue the Superhuman-style refinement of `/mail`
+6. connect model routing to enrichment and drafting flows
+
+## Copyable next-chat prompt
+
+```text
+Continue from Phase 4: Workspace Polish + Model Settings.
+
+Current product goal:
+- Smart Email Client should keep moving toward a Superhuman-style desktop mail client
+- deterministic analytics must remain the foundation
+- assistant workflows sit on top of structured mailbox intelligence
+
+Please continue autonomously.
+
+What to work on next:
+1. Add a first-class Settings area to the app shell
+2. Create /settings/models, /settings/accounts, and /settings/workflows
+3. In Settings -> Models, add a field called "Model source for enrichment"
+4. Support these model-source categories:
+   - Local provider: LM Studio, Ollama, and compatible local endpoints
+   - Cloud API token: OpenAI API, Groq API, Anthropic API, OpenRouter, etc.
+   - OAuth-connected assistant: ChatGPT / Codex or similar when feasible
+5. Preserve the rule that deterministic analytics do not depend on the selected model
+6. Keep refining /mail toward a Superhuman-like interaction model while adding Settings
+
+When making product decisions, optimize for:
+- keyboard-first speed
+- clean modern desktop UX
+- shared mailbox support
+- deterministic intelligence first
+- model routing as a first-class product setting
+
+Please update docs as needed, implement the next slice, verify with typecheck/build, commit, and push to origin/main.
+```

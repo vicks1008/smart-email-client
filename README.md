@@ -17,7 +17,7 @@ The product is not just a mailbox viewer. The long-term goal is an AI-assisted e
 - `Mailbox access`: Apple Mail, Microsoft Graph, Thunderbird, or archive ingestion
 - `Deterministic intelligence`: organizations, contacts, reply-state, follow-up timing, and activity analytics
 - `Assistant workflows`: drafting, templates, voice learning, and thread insights
-- `Provider routing`: OpenAI for frontier reasoning, Groq for fast hosted open-weight inference, and Ollama for truly local models
+- `Provider routing`: local LLMs, cloud API providers, and OAuth-connected frontier assistants
 
 This ordering matters:
 
@@ -116,6 +116,36 @@ The persistent product target for this repo includes:
 - template mining and template library support
 - analytics over historical activity
 - natural-language questions over structured mailbox data
+- a first-class `Settings` area for account, model, and workflow configuration
+
+## Settings Direction
+
+The product now explicitly requires a `Settings` workspace. This is not optional polish. It is part of the product surface for a real AI email client.
+
+Initial settings areas should include:
+
+- `Accounts`: mailbox providers, shared mailboxes, and local live-mail integrations
+- `Models`: enrichment and drafting provider selection
+- `Workflows`: follow-up defaults, queue behavior, and automation preferences
+- `Appearance`: keyboard-first and desktop UX preferences as the client matures
+
+The `Models` settings area must include a `Model source for enrichment` field so the user can choose how the app performs enrichment, drafting, and assistant workflows.
+
+Supported model-source categories should include:
+
+- `Local provider`
+  Examples: `Ollama`, `LM Studio`, and compatible local OpenAI-style endpoints
+- `Cloud API token`
+  Examples: OpenAI API, Groq API, Anthropic API, OpenRouter, or similar token-based providers
+- `OAuth-connected assistant`
+  Examples: `ChatGPT`, `Codex`, or similar OAuth-based model products if and when supported cleanly
+
+The model source should support both:
+
+- `Auto routing`
+- `Explicit provider/model selection`
+
+The product should preserve the principle that deterministic analytics and mailbox intelligence come first, while the chosen model source performs explanation, drafting, enrichment, and workflow assistance on top.
 
 ## Ingestion Strategy
 
@@ -195,3 +225,4 @@ When making product decisions in this repo, optimize for:
 - read/write/send mailbox support, not read-only tooling
 - shared mailbox support as a first-class requirement
 - a real AI email workspace, not just sync infrastructure
+- a persistent settings surface for model-source control, including local models, API tokens, and OAuth-connected assistants
