@@ -1671,6 +1671,11 @@ body {
   background: rgba(255, 255, 255, 0.72);
 }
 
+.client-topbar.utility {
+  align-items: center;
+  padding: 9px 12px;
+}
+
 .topbar-copy h2 {
   font-size: clamp(1.18rem, 2vw, 1.48rem);
 }
@@ -1680,6 +1685,11 @@ body {
   font-size: 0.88rem;
 }
 
+.client-topbar.utility .topbar-copy p {
+  max-width: 320px;
+  font-size: 0.8rem;
+}
+
 .client-search,
 .client-input {
   border-radius: 14px;
@@ -1687,6 +1697,13 @@ body {
 
 .client-button {
   border-radius: 14px;
+}
+
+.client-button.tertiary {
+  padding: 9px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
 }
 
 .mail-grid {
@@ -1725,7 +1742,7 @@ body {
 .thread-row,
 .mini-thread-card {
   border-radius: 14px;
-  padding: 12px;
+  padding: 10px 11px;
   background: rgba(255, 255, 255, 0.76);
 }
 
@@ -1751,11 +1768,13 @@ body {
 }
 
 .thread-row-subject {
-  margin: 8px 0 4px;
+  margin: 6px 0 3px;
+  font-size: 0.92rem;
 }
 
 .thread-row p {
-  font-size: 0.84rem;
+  font-size: 0.8rem;
+  line-height: 1.42;
 }
 
 .reader-card,
@@ -1837,6 +1856,28 @@ body {
   margin-bottom: 2px;
 }
 
+.reply-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.reply-suggestion {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(242, 236, 229, 0.95);
+  color: #8b7c70;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.reply-suggestion:hover {
+  background: rgba(234, 227, 220, 0.98);
+  color: var(--ink);
+  transform: translateY(-1px);
+}
+
 .conversation-card,
 .live-message-card,
 .composer-card {
@@ -1858,6 +1899,16 @@ body {
   padding: 18px 18px 16px;
   border: 1px solid rgba(130, 108, 86, 0.06);
   box-shadow: none;
+}
+
+.conversation-stack .mail-message:not(:last-child) {
+  background: rgba(251, 248, 244, 0.9);
+  border-color: rgba(130, 108, 86, 0.04);
+}
+
+.conversation-stack .mail-message:last-child {
+  background: rgba(255, 255, 255, 0.99);
+  border-color: rgba(130, 108, 86, 0.08);
 }
 
 .mail-message + .mail-message {
@@ -1890,6 +1941,26 @@ body {
   letter-spacing: -0.03em;
 }
 
+.composer-envelope {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(130, 108, 86, 0.08);
+}
+
+.composer-envelope span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.composer-envelope strong {
+  min-width: 0;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #4f4339;
+}
+
 .template-row {
   margin-bottom: 0;
   gap: 6px;
@@ -1905,7 +1976,7 @@ body {
   min-height: 150px;
   border-radius: 0;
   border: 0;
-  padding: 6px 0 0;
+  padding: 2px 0 0;
   background: transparent;
   box-shadow: none;
   resize: none;
@@ -1918,7 +1989,7 @@ body {
 }
 
 .composer-toolbar {
-  padding-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid rgba(130, 108, 86, 0.08);
 }
 
@@ -2013,6 +2084,31 @@ body {
   line-height: 1.58;
 }
 
+.composer-footer-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.composer-footer-note span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(244, 220, 206, 0.94), rgba(221, 231, 246, 0.94));
+  color: #7b6354;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.composer-footer-note p {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
 .profile-support-card .pane-header {
   padding-top: 0;
 }
@@ -2043,7 +2139,7 @@ body {
 
 .client-app[data-workspace="inbox"] .topbar-copy h2,
 .client-app[data-workspace="live"] .topbar-copy h2 {
-  font-size: 1.24rem;
+  font-size: 1.14rem;
 }
 
 .client-app[data-workspace="inbox"] .reader-pane,

@@ -985,6 +985,8 @@ export function MailApp() {
     emailDomain(selectedThunderbirdMessage?.recipients) ||
     emailDomain(selectedThunderbirdMessage?.accountName);
   const liveSenderInitials = initials(selectedThunderbirdMessage?.author ?? selectedThunderbirdMessage?.subject ?? "Mail");
+  const archiveReplySuggestions = ["You got it", "Looks good", "Following up"];
+  const liveReplySuggestions = ["You too!", "Looking forward", "Sure thing"];
   const showInspectorPane =
     workspaceView === "accounts" ||
     workspaceView === "analytics" ||
@@ -1044,7 +1046,7 @@ export function MailApp() {
         </aside>
 
         <section className="client-main">
-          <header className="client-topbar">
+          <header className={`client-topbar ${workspaceView === "inbox" || workspaceView === "live" ? "utility" : ""}`}>
             <div className="topbar-copy">
               <div className="eyebrow">Actionable workspace</div>
               <h2>{workspaceTitle}</h2>
@@ -1553,7 +1555,7 @@ export function MailApp() {
                       <span className="soft-tag">{selectedThunderbirdMessage.accountName ?? "Mail.app"}</span>
                     </div>
 
-                    <div className="reader-card live-message-card">
+                  <div className="reader-card live-message-card">
                       <div className="message-card mail-message">
                         <div className="message-card-head">
                           <div>
@@ -1566,14 +1568,26 @@ export function MailApp() {
                       </div>
                     </div>
 
+                    <div className="reply-suggestions" data-testid="live-reply-suggestions">
+                      {liveReplySuggestions.map((label) => (
+                        <button key={label} className="reply-suggestion" onClick={() => setDraftText(label)} type="button">
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
                     <div className="reader-card composer-card">
                       <div className="composer-shell">
                         <div className="composer-heading">
                           <div className="eyebrow">Quick reply</div>
                           <h3>Draft from the live message</h3>
                         </div>
+                        <div className="composer-envelope">
+                          <span>To</span>
+                          <strong>{selectedThunderbirdMessage.author}</strong>
+                        </div>
                         <div className="template-row">
-                          {["You too!", "Looking forward", "Sure thing"].map((label) => (
+                          {liveReplySuggestions.map((label) => (
                             <button
                               key={label}
                               className="template-pill"
@@ -1596,13 +1610,20 @@ export function MailApp() {
                             <span className="soft-tag">{selectedThunderbirdMessage.author}</span>
                           </div>
                           <div className="composer-actions">
-                            <button className="client-button secondary" type="button">
+                            <button className="client-button tertiary" type="button">
                               Send later
                             </button>
+                            <button className="client-button tertiary" type="button">
+                              Remind me
+                            </button>
                             <button className="client-button primary" type="button">
-                              Draft
+                              Send
                             </button>
                           </div>
+                        </div>
+                        <div className="composer-footer-note">
+                          <span>ai</span>
+                          <p>Drafted in your voice from live context.</p>
                         </div>
                       </div>
                     </div>
@@ -1725,11 +1746,25 @@ export function MailApp() {
                     </div>
                   </div>
 
+                  <div className="reply-suggestions" data-testid="archive-reply-suggestions">
+                    {archiveReplySuggestions.map((label) => (
+                      <button key={label} className="reply-suggestion" onClick={() => setDraftText(label)} type="button">
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
                   <div className="reader-card composer-card">
                     <div className="composer-shell">
                       <div className="composer-heading">
                         <div className="eyebrow">Draft</div>
                         <h3>Reply to {selectedPerson?.displayName ?? selectedPersonEmail ?? "contact"}</h3>
+                      </div>
+                      <div className="composer-envelope">
+                        <span>To</span>
+                        <strong>{selectedPerson?.displayName ?? selectedPersonEmail ?? "recipient"}</strong>
+                        <span>Cc</span>
+                        <strong>{selectedThread.mailbox.displayName}</strong>
                       </div>
                       <div className="template-row">
                         {draftTemplates.map((template) => (
@@ -1755,15 +1790,22 @@ export function MailApp() {
                           <span className="soft-tag">{selectedThread.mailbox.displayName}</span>
                         </div>
                         <div className="composer-actions">
-                          <button className="client-button secondary" onClick={() => void copyDraft()} type="button">
+                          <button className="client-button tertiary" onClick={() => void copyDraft()} type="button">
                             <Copy size={16} />
                             Copy
                           </button>
+                          <button className="client-button tertiary" type="button">
+                            Send later
+                          </button>
                           <button className="client-button primary" type="button">
                             <SendHorizontal size={16} />
-                            Done
+                            Send
                           </button>
                         </div>
+                      </div>
+                      <div className="composer-footer-note">
+                        <span>ai</span>
+                        <p>Trained on your sent mail, templates, and account context.</p>
                       </div>
                     </div>
                   </div>
