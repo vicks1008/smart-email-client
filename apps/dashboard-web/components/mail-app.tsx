@@ -105,6 +105,22 @@ function formatCount(value: number) {
   return new Intl.NumberFormat(undefined).format(value);
 }
 
+function monogram(value: string | null | undefined) {
+  const cleaned = (value ?? "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[^A-Za-z0-9 ]/g, " ")
+    .trim();
+
+  if (!cleaned) {
+    return "SM";
+  }
+
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? "";
+  const second = parts[1]?.[0] ?? parts[0]?.[1] ?? "";
+  return `${first}${second}`.toUpperCase();
+}
+
 function seedLiveMessageDetail(
   message: ThunderbirdMessageSummary,
   accountName: string | null,
@@ -882,7 +898,7 @@ export function MailApp() {
 
   return (
     <main className="client-shell">
-      <div className="client-app">
+      <div className="client-app" data-workspace={workspaceView}>
         <aside className="client-nav" data-testid="client-nav">
           <div className="nav-brand">
             <div className="nav-mark">
@@ -1081,7 +1097,17 @@ export function MailApp() {
                           data-testid={`thread-row-${thread.id}`}
                         >
                           <div className="thread-row-top">
-                            <strong>{thread.primaryOrganization?.name ?? thread.latestMessage?.fromName ?? thread.subject}</strong>
+                            <div className="thread-row-identity">
+                              <div className="avatar-badge">
+                                {monogram(thread.primaryOrganization?.name ?? thread.latestMessage?.fromName ?? thread.subject)}
+                              </div>
+                              <div className="thread-row-title-group">
+                                <strong>{thread.primaryOrganization?.name ?? thread.latestMessage?.fromName ?? thread.subject}</strong>
+                                <span className="thread-row-kicker">
+                                  {thread.primaryOrganization?.primaryDomain ?? thread.latestMessage?.fromAddress ?? "Conversation"}
+                                </span>
+                              </div>
+                            </div>
                             <span>{formatShortDate(thread.replyState?.replyDueAt ?? thread.lastMessageAt)}</span>
                           </div>
                           <div className="thread-row-subject">{thread.subject}</div>
@@ -1120,7 +1146,15 @@ export function MailApp() {
                           data-testid={`followup-row-${task.id}`}
                         >
                           <div className="thread-row-top">
-                            <strong>{task.organization?.name ?? task.contact?.displayName ?? task.title}</strong>
+                            <div className="thread-row-identity">
+                              <div className="avatar-badge">
+                                {monogram(task.organization?.name ?? task.contact?.displayName ?? task.title)}
+                              </div>
+                              <div className="thread-row-title-group">
+                                <strong>{task.organization?.name ?? task.contact?.displayName ?? task.title}</strong>
+                                <span className="thread-row-kicker">{task.mailbox.displayName}</span>
+                              </div>
+                            </div>
                             <span>{formatShortDate(task.dueAt)}</span>
                           </div>
                           <div className="thread-row-subject">{task.thread.subject}</div>
@@ -1158,7 +1192,13 @@ export function MailApp() {
                           data-testid={`organization-row-${organization.id}`}
                         >
                           <div className="thread-row-top">
-                            <strong>{organization.name}</strong>
+                            <div className="thread-row-identity">
+                              <div className="avatar-badge">{monogram(organization.name)}</div>
+                              <div className="thread-row-title-group">
+                                <strong>{organization.name}</strong>
+                                <span className="thread-row-kicker">{organization.kind.toLowerCase()}</span>
+                              </div>
+                            </div>
                             <span>{organization.primaryDomain ?? organization.kind.toLowerCase()}</span>
                           </div>
                           <div className="thread-row-meta spread">
@@ -1195,7 +1235,13 @@ export function MailApp() {
                           data-testid={`activity-row-${organization.organizationId}`}
                         >
                           <div className="thread-row-top">
-                            <strong>{organization.name}</strong>
+                            <div className="thread-row-identity">
+                              <div className="avatar-badge">{monogram(organization.name)}</div>
+                              <div className="thread-row-title-group">
+                                <strong>{organization.name}</strong>
+                                <span className="thread-row-kicker">{organization.inferredKind.toLowerCase()}</span>
+                              </div>
+                            </div>
                             <span>{organization.primaryDomain ?? organization.kind.toLowerCase()}</span>
                           </div>
                           <div className="thread-row-subject">
@@ -1278,7 +1324,13 @@ export function MailApp() {
                           }}
                         >
                           <div className="thread-row-top">
-                            <strong>{message.author}</strong>
+                            <div className="thread-row-identity">
+                              <div className="avatar-badge">{monogram(message.author)}</div>
+                              <div className="thread-row-title-group">
+                                <strong>{message.author}</strong>
+                                <span className="thread-row-kicker">{message.folder}</span>
+                              </div>
+                            </div>
                             <span>{formatShortDate(message.date)}</span>
                           </div>
                           <div className="thread-row-subject">{message.subject || "(no subject)"}</div>
@@ -1390,7 +1442,7 @@ export function MailApp() {
                       </div>
                     </div>
 
-                    <div className="reader-card">
+                    <div className="reader-card live-message-card">
                       <div className="message-card">
                         <div className="message-card-head">
                           <div>
@@ -1497,7 +1549,7 @@ export function MailApp() {
                     </div>
                   </div>
 
-                  <div className="reader-card">
+                  <div className="reader-card composer-card">
                     <div className="pane-header">
                       <div>
                         <div className="eyebrow">Assistant draft pad</div>
@@ -1530,7 +1582,7 @@ export function MailApp() {
                     />
                   </div>
 
-                  <div className="reader-card">
+                  <div className="reader-card conversation-card">
                     <div className="pane-header">
                       <div>
                         <div className="eyebrow">Thread history</div>
