@@ -109,13 +109,16 @@ The next likely UI moves are:
 - `Local provider`, `Cloud API token`, and `OAuth-connected assistant` categories are now supported
 - deterministic analytics remain explicitly separate from selected model routing
 - `/mail` now turns shortcut hints into real keyboard actions for search, list movement, composer focus, and escape-to-reset behavior
+- `/mail` now defaults to a unified queue across imported mailboxes, with explicit `All`, `Personal`, and `Shared` scope controls
+- the thread reader now exposes an assistant workbench with routed model context, deterministic thread briefing data, and grounded draft variants
+- the reader and command palette now expose first-pass triage actions for read state, archive, follow-up scheduling, and Settings navigation
 
 ## Suggested next implementation order
 
 1. continue the Superhuman-style refinement of `/mail`
-2. connect model routing to enrichment and drafting flows
-3. begin surfacing saved settings inside assistant and reply experiences
-4. deepen shared mailbox controls inside `Settings -> Accounts`
+2. deepen shared mailbox controls inside `Settings -> Accounts`
+3. push saved model routing deeper into more assistant and send flows
+4. add stronger ownership, follow-up, and send-later workflows for team queues
 
 ## Copyable next-chat prompt
 

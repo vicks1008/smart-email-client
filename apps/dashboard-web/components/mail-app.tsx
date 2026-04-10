@@ -1,19 +1,23 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   Archive,
   AtSign,
+  BellRing,
   BrainCircuit,
   Building2,
   CircleUserRound,
   CheckCircle2,
-  ChevronRight,
+  Command,
   Clock3,
   Copy,
+  FolderArchive,
   FolderSync,
   Forward,
   Globe,
   Inbox,
+  LoaderCircle,
   MailPlus,
   MapPin,
   MoreHorizontal,
@@ -25,7 +29,6 @@ import {
   SendHorizontal,
   ShieldAlert,
   Upload,
-  Users
 } from "lucide-react";
 import {
   startTransition,
@@ -41,6 +44,7 @@ import { toast } from "sonner";
 
 import {
   addSharedMailbox,
+  createThreadFollowUp,
   fetchAccounts,
   fetchAppleMailAccounts as fetchThunderbirdAccounts,
   fetchAppleMailFolders as fetchThunderbirdFolders,
@@ -48,6 +52,7 @@ import {
   fetchAppleMailRecentMessages as fetchThunderbirdRecentMessages,
   fetchAppleMailStatus as fetchThunderbirdStatus,
   fetchImports,
+  fetchThreadAssistant,
   fetchThread,
   fetchThreads,
   fetchThunderbirdDiscoveredMailboxes,
@@ -56,6 +61,8 @@ import {
   fetchWorkbench,
   getMicrosoftConnectUrl,
   queueSync,
+  setThreadArchivedState,
+  setThreadReadState,
   searchAppleMailMessages as searchThunderbirdMessages,
   syncAllThunderbirdMailboxes,
   syncThunderbirdMailbox,
@@ -67,6 +74,7 @@ import {
   type AppleMailMessageSummary as ThunderbirdMessageSummary,
   type AppleMailStatus as ThunderbirdStatus,
   type ImportJobSummary,
+  type ThreadAssistantResponse,
   type ThreadDetail,
   type ThreadSummary,
   type ThunderbirdDiscoveredMailbox,
@@ -79,6 +87,7 @@ import { AppShell } from "./app-shell";
 
 type WorkspaceView = "inbox" | "accounts" | "followups" | "analytics" | "live";
 type InboxQueue = "needsReply" | "waitingOnThem" | "allThreads";
+type MailboxScope = "all" | "personal" | "shared";
 
 type DraftTemplate = {
   id: string;
@@ -339,6 +348,26 @@ function threadMatchesQuery(thread: ThreadSummary, normalizedQuery: string) {
   return haystack.includes(normalizedQuery);
 }
 
+function matchesMailboxScope(
+  scope: MailboxScope,
+  role: "PERSONAL" | "SHARED" | "TEAM" | null | undefined,
+  kind?: "PRIMARY" | "SHARED" | null
+) {
+  if (scope === "all") {
+    return true;
+  }
+
+  const isShared = role === "SHARED" || role === "TEAM" || kind === "SHARED";
+  return scope === "shared" ? isShared : !isShared;
+}
+
+function normalizeCommandText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function isEditableElement(target: EventTarget | null) {
   const element = target instanceof HTMLElement ? target : null;
   if (!element) {
@@ -354,12 +383,19 @@ function isEditableElement(target: EventTarget | null) {
 }
 
 export function MailApp() {
+  const router = useRouter();
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("inbox");
   const [inboxQueue, setInboxQueue] = useState<InboxQueue>("needsReply");
+  const [mailboxScope, setMailboxScope] = useState<MailboxScope>("all");
   const [search, setSearch] = useState("");
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const [selectedAnalyticsMonths, setSelectedAnalyticsMonths] = useState<1 | 4 | 6>(4);
   const [draftText, setDraftText] = useState("");
+  const [assistantData, setAssistantData] = useState<ThreadAssistantResponse | null>(null);
+  const [isAssistantPending, startAssistantTransition] = useTransition();
+  const [isActionPending, startActionTransition] = useTransition();
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
 
   const [thunderbirdStatus, setThunderbirdStatus] = useState<ThunderbirdStatus | null>(null);
   const [thunderbirdAccounts, setThunderbirdAccounts] = useState<ThunderbirdAccount[]>([]);
@@ -399,6 +435,7 @@ export function MailApp() {
   const [isThunderbirdBulkImportPending, startThunderbirdBulkImportTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const draftPadRef = useRef<HTMLTextAreaElement>(null);
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   const deferredSearch = useDeferredValue(search);
 
@@ -466,7 +503,7 @@ export function MailApp() {
 
   useEffect(() => {
     if (!selectedMailboxId) {
-      setThreads([]);
+      void refreshThreads();
       setSelectedThread(null);
       void refreshWorkbench();
       void refreshImports(undefined, selectedAccountId ?? undefined);
@@ -489,6 +526,7 @@ export function MailApp() {
   useEffect(() => {
     if (!selectedThreadId) {
       setSelectedThread(null);
+      setAssistantData(null);
       return;
     }
 
@@ -496,9 +534,33 @@ export function MailApp() {
   }, [selectedThreadId]);
 
   useEffect(() => {
+    if (!selectedThreadId || workspaceView === "analytics" || workspaceView === "live") {
+      setAssistantData(null);
+      return;
+    }
+
+    startAssistantTransition(async () => {
+      try {
+        const data = await fetchThreadAssistant(selectedThreadId);
+        setAssistantData(data);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to load assistant briefing.");
+      }
+    });
+  }, [selectedThreadId, workspaceView]);
+
+  useEffect(() => {
     const templates = draftTemplatesForThread(selectedThread);
     setDraftText(templates[0]?.body ?? "");
   }, [selectedThreadId, selectedThread]);
+
+  useEffect(() => {
+    if (!isCommandPaletteOpen) {
+      return;
+    }
+
+    commandInputRef.current?.focus();
+  }, [isCommandPaletteOpen]);
 
   async function refreshThunderbirdStatus() {
     try {
@@ -624,6 +686,85 @@ export function MailApp() {
     composer.setSelectionRange(end, end);
   }
 
+  async function refreshSelectedThreadSurfaces(threadId: string, mailboxId?: string | null) {
+    await Promise.all([
+      loadThread(threadId),
+      refreshWorkbench(mailboxId ?? undefined),
+      refreshThreads(mailboxId ?? undefined)
+    ]);
+  }
+
+  function applySuggestedDraft(variantId?: string) {
+    if (!assistantData?.draftSuggestions.length) {
+      return;
+    }
+
+    const variant =
+      assistantData.draftSuggestions.find((draftSuggestion) => draftSuggestion.id === variantId) ??
+      assistantData.draftSuggestions[0];
+    if (!variant) {
+      return;
+    }
+
+    setDraftText(variant.body);
+    focusComposer();
+    toast.success(`Loaded ${variant.label.toLowerCase()} draft.`);
+  }
+
+  function queueFollowUp(hoursFromNow: number, label: string) {
+    if (!selectedThreadId) {
+      return;
+    }
+
+    const dueAt = new Date(Date.now() + hoursFromNow * 60 * 60 * 1000).toISOString();
+
+    startActionTransition(async () => {
+      try {
+        await createThreadFollowUp(selectedThreadId, {
+          dueAt,
+          note: `${label} from the mail workspace`
+        });
+        toast.success(`${label} scheduled.`);
+        await refreshSelectedThreadSurfaces(selectedThreadId, selectedMailboxId);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to schedule follow-up.");
+      }
+    });
+  }
+
+  function updateThreadReadState(read: boolean) {
+    if (!selectedThreadId) {
+      return;
+    }
+
+    startActionTransition(async () => {
+      try {
+        await setThreadReadState(selectedThreadId, read);
+        toast.success(read ? "Thread marked read." : "Thread marked unread.");
+        await refreshSelectedThreadSurfaces(selectedThreadId, selectedMailboxId);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to update read state.");
+      }
+    });
+  }
+
+  function updateThreadArchivedState(archived: boolean) {
+    if (!selectedThreadId) {
+      return;
+    }
+
+    startActionTransition(async () => {
+      try {
+        await setThreadArchivedState(selectedThreadId, archived);
+        toast.success(archived ? "Thread archived." : "Thread restored to the queue.");
+        await refreshWorkbench(selectedMailboxId ?? undefined);
+        await refreshThreads(selectedMailboxId ?? undefined);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to update archive state.");
+      }
+    });
+  }
+
   async function refreshArchiveAccounts() {
     setLoading(true);
 
@@ -636,9 +777,7 @@ export function MailApp() {
         const nextAccount =
           data.accounts.find((account) => account.id === currentAccountId) ?? data.accounts[0] ?? null;
         const nextMailboxId =
-          nextAccount?.mailboxes.find((mailbox) => mailbox.id === selectedMailboxId)?.id ??
-          nextAccount?.mailboxes[0]?.id ??
-          null;
+          nextAccount?.mailboxes.find((mailbox) => mailbox.id === selectedMailboxId)?.id ?? null;
 
         setSelectedAccountId(nextAccount?.id ?? null);
         setSelectedMailboxId(nextMailboxId);
@@ -650,7 +789,7 @@ export function MailApp() {
     }
   }
 
-  async function refreshThreads(mailboxId: string) {
+  async function refreshThreads(mailboxId?: string) {
     try {
       const data = await fetchThreads(mailboxId);
       setThreads(data.threads);
@@ -853,33 +992,38 @@ export function MailApp() {
   const normalizedQuery = deferredSearch.trim().toLowerCase();
 
   const allArchiveThreads = useMemo(() => {
+    const scopedThreads = threads.filter((thread) => matchesMailboxScope(mailboxScope, thread.mailbox.role, thread.mailbox.kind));
     if (!normalizedQuery) {
-      return threads;
+      return scopedThreads;
     }
 
-    return threads.filter((thread) => threadMatchesQuery(thread, normalizedQuery));
-  }, [normalizedQuery, threads]);
+    return scopedThreads.filter((thread) => threadMatchesQuery(thread, normalizedQuery));
+  }, [mailboxScope, normalizedQuery, threads]);
 
   const filteredNeedsReply = useMemo(() => {
-    const items = workbench?.needsReply ?? [];
+    const items = (workbench?.needsReply ?? []).filter((thread) =>
+      matchesMailboxScope(mailboxScope, thread.mailbox.role, thread.mailbox.kind)
+    );
     if (!normalizedQuery) {
       return items;
     }
 
     return items.filter((thread) => threadMatchesQuery(thread, normalizedQuery));
-  }, [normalizedQuery, workbench]);
+  }, [mailboxScope, normalizedQuery, workbench]);
 
   const filteredWaiting = useMemo(() => {
-    const items = workbench?.waitingOnThem ?? [];
+    const items = (workbench?.waitingOnThem ?? []).filter((thread) =>
+      matchesMailboxScope(mailboxScope, thread.mailbox.role, thread.mailbox.kind)
+    );
     if (!normalizedQuery) {
       return items;
     }
 
     return items.filter((thread) => threadMatchesQuery(thread, normalizedQuery));
-  }, [normalizedQuery, workbench]);
+  }, [mailboxScope, normalizedQuery, workbench]);
 
   const filteredFollowUps = useMemo(() => {
-    const items = workbench?.followUpToday ?? [];
+    const items = (workbench?.followUpToday ?? []).filter((task) => matchesMailboxScope(mailboxScope, task.mailbox.role));
     if (!normalizedQuery) {
       return items;
     }
@@ -890,7 +1034,7 @@ export function MailApp() {
         .toLowerCase()
         .includes(normalizedQuery)
     );
-  }, [normalizedQuery, workbench]);
+  }, [mailboxScope, normalizedQuery, workbench]);
 
   const filteredOrganizations = useMemo(() => {
     const items = workbench?.byOrganization ?? [];
@@ -1051,10 +1195,14 @@ export function MailApp() {
       return;
     }
 
+    if (!workbench) {
+      return;
+    }
+
     if (inboxQueue === "needsReply" && filteredNeedsReply.length === 0 && allArchiveThreads.length > 0) {
       setInboxQueue("allThreads");
     }
-  }, [allArchiveThreads.length, filteredNeedsReply.length, inboxQueue, workspaceView]);
+  }, [allArchiveThreads.length, filteredNeedsReply.length, inboxQueue, workspaceView, workbench]);
 
   useEffect(() => {
     if (!activeLeftPaneSelection) {
@@ -1069,6 +1217,13 @@ export function MailApp() {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        setIsCommandPaletteOpen((current) => !current);
+        setCommandQuery("");
+        return;
+      }
+
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         focusSearch();
@@ -1076,6 +1231,12 @@ export function MailApp() {
       }
 
       if (event.key === "Escape") {
+        if (isCommandPaletteOpen) {
+          setIsCommandPaletteOpen(false);
+          setCommandQuery("");
+          return;
+        }
+
         if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
           document.activeElement.blur();
           return;
@@ -1106,7 +1267,7 @@ export function MailApp() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeLeftPaneRows, activeLeftPaneSelection, canFocusComposer, workspaceView, thunderbirdMessages]);
+  }, [activeLeftPaneRows, activeLeftPaneSelection, canFocusComposer, isCommandPaletteOpen, workspaceView, thunderbirdMessages]);
 
   const workspaceTitle =
     workspaceView === "inbox"
@@ -1171,6 +1332,148 @@ export function MailApp() {
         ? `${selectedThunderbirdAccount?.name ?? "Mail.app"} · ${liveHeaderName}`
         : null;
 
+  const commandItems = useMemo(() => {
+    const items = [
+      {
+        id: "workspace-inbox",
+        label: "Open Inbox",
+        hint: "Switch to inbox queue",
+        run: () => setWorkspaceView("inbox")
+      },
+      {
+        id: "workspace-followups",
+        label: "Open Follow-ups",
+        hint: "Jump to the reminder queue",
+        run: () => setWorkspaceView("followups")
+      },
+      {
+        id: "workspace-live",
+        label: "Open Live Mail",
+        hint: "Browse Apple Mail on this Mac",
+        run: () => setWorkspaceView("live")
+      },
+      {
+        id: "settings-models",
+        label: "Open Settings: Models",
+        hint: "Adjust model routing",
+        run: () => router.push("/settings/models")
+      },
+      {
+        id: "settings-accounts",
+        label: "Open Settings: Accounts",
+        hint: "Adjust mailbox routing",
+        run: () => router.push("/settings/accounts")
+      },
+      {
+        id: "settings-workflows",
+        label: "Open Settings: Workflows",
+        hint: "Adjust workflow defaults",
+        run: () => router.push("/settings/workflows")
+      },
+      {
+        id: "focus-search",
+        label: "Focus Search",
+        hint: "Move to the global search box",
+        run: () => focusSearch()
+      },
+      {
+        id: "focus-composer",
+        label: "Focus Composer",
+        hint: "Jump into the inline reply box",
+        run: () => focusComposer()
+      },
+      {
+        id: "queue-needs-reply",
+        label: "Queue: Needs Reply",
+        hint: "Show the urgent reply queue",
+        run: () => {
+          setWorkspaceView("inbox");
+          setInboxQueue("needsReply");
+        }
+      },
+      {
+        id: "queue-waiting",
+        label: "Queue: Waiting",
+        hint: "Show waiting threads",
+        run: () => {
+          setWorkspaceView("inbox");
+          setInboxQueue("waitingOnThem");
+        }
+      },
+      {
+        id: "scope-shared",
+        label: "Filter: Shared Mailboxes",
+        hint: "Focus on shared inbox work",
+        run: () => setMailboxScope("shared")
+      },
+      {
+        id: "scope-personal",
+        label: "Filter: Personal Mailboxes",
+        hint: "Focus on personal inbox work",
+        run: () => setMailboxScope("personal")
+      },
+      {
+        id: "scope-all",
+        label: "Filter: All Mailboxes",
+        hint: "Show all mailbox work",
+        run: () => setMailboxScope("all")
+      }
+    ];
+
+    if (selectedThreadId) {
+      items.push(
+        {
+          id: "thread-read",
+          label: "Mark Thread Read",
+          hint: "Clear unread state for the selected thread",
+          run: () => updateThreadReadState(true)
+        },
+        {
+          id: "thread-unread",
+          label: "Mark Thread Unread",
+          hint: "Return the thread to unread",
+          run: () => updateThreadReadState(false)
+        },
+        {
+          id: "thread-archive",
+          label: "Archive Thread",
+          hint: "Clear it from the active queue",
+          run: () => updateThreadArchivedState(true)
+        },
+        {
+          id: "thread-remind-tomorrow",
+          label: "Remind Tomorrow",
+          hint: "Create a follow-up for tomorrow",
+          run: () => queueFollowUp(24, "Follow up tomorrow")
+        },
+        {
+          id: "thread-remind-friday",
+          label: "Remind in 3 Days",
+          hint: "Create a follow-up for later this week",
+          run: () => queueFollowUp(72, "Follow up later this week")
+        }
+      );
+    }
+
+    if (assistantData?.draftSuggestions.length) {
+      for (const draftSuggestion of assistantData.draftSuggestions) {
+        items.push({
+          id: `draft-${draftSuggestion.id}`,
+          label: `Apply Draft: ${draftSuggestion.label}`,
+          hint: draftSuggestion.subject,
+          run: () => applySuggestedDraft(draftSuggestion.id)
+        });
+      }
+    }
+
+    const normalizedCommandQuery = normalizeCommandText(commandQuery);
+    return normalizedCommandQuery
+      ? items.filter((item) =>
+          normalizeCommandText(`${item.label} ${item.hint} ${item.id}`).includes(normalizedCommandQuery)
+        )
+      : items;
+  }, [assistantData, commandQuery, router, selectedThreadId]);
+
   return (
     <AppShell
       workspaceKey={workspaceView}
@@ -1181,32 +1484,37 @@ export function MailApp() {
           icon: Inbox,
           active: workspaceView === "inbox",
           onSelect: () => setWorkspaceView("inbox"),
-          badge: workbench?.summary.needsReply ?? 0
+          badge: workbench?.summary.needsReply ?? 0,
+          testId: "workspace-nav-inbox"
         },
         {
           label: "Accounts",
           icon: Building2,
           active: workspaceView === "accounts",
-          onSelect: () => setWorkspaceView("accounts")
+          onSelect: () => setWorkspaceView("accounts"),
+          testId: "workspace-nav-accounts"
         },
         {
           label: "Follow-ups",
           icon: Clock3,
           active: workspaceView === "followups",
           onSelect: () => setWorkspaceView("followups"),
-          badge: workbench?.summary.followUpToday ?? 0
+          badge: workbench?.summary.followUpToday ?? 0,
+          testId: "workspace-nav-followups"
         },
         {
           label: "Analytics",
           icon: BrainCircuit,
           active: workspaceView === "analytics",
-          onSelect: () => setWorkspaceView("analytics")
+          onSelect: () => setWorkspaceView("analytics"),
+          testId: "workspace-nav-analytics"
         },
         {
           label: "Live",
           icon: PlugZap,
           active: workspaceView === "live",
-          onSelect: () => setWorkspaceView("live")
+          onSelect: () => setWorkspaceView("live"),
+          testId: "workspace-nav-live"
         }
       ]}
       stats={[
@@ -1259,6 +1567,23 @@ export function MailApp() {
               {(workspaceView === "inbox" || workspaceView === "live") && (
                 <span className="soft-tag topbar-hint">⌘K</span>
               )}
+              {workspaceView !== "live" && workspaceView !== "analytics" ? (
+                <div className="segmented-control" data-testid="mailbox-scope-selector">
+                  <button className={mailboxScope === "all" ? "active" : ""} onClick={() => setMailboxScope("all")} type="button">
+                    All
+                  </button>
+                  <button className={mailboxScope === "personal" ? "active" : ""} onClick={() => setMailboxScope("personal")} type="button">
+                    Personal
+                  </button>
+                  <button className={mailboxScope === "shared" ? "active" : ""} onClick={() => setMailboxScope("shared")} type="button">
+                    Shared
+                  </button>
+                </div>
+              ) : null}
+              <button className="client-button secondary" data-shortcut="⌘J" onClick={() => setIsCommandPaletteOpen(true)} type="button">
+                <Command size={16} />
+                Commands
+              </button>
               {workspaceView === "analytics" ? (
                 <div className="segmented-control analytics-range" data-testid="analytics-range-selector">
                   {([1, 4, 6] as const).map((months) => (
@@ -1318,7 +1643,7 @@ export function MailApp() {
                         className={`mailbox-chip ${account.id === selectedAccountId ? "active" : ""}`}
                         onClick={() => {
                           setSelectedAccountId(account.id);
-                          setSelectedMailboxId(account.mailboxes[0]?.id ?? null);
+                          setSelectedMailboxId(null);
                         }}
                         data-testid={`account-${account.email}`}
                       >
@@ -1336,16 +1661,27 @@ export function MailApp() {
                 <span className="eyebrow">Mailboxes</span>
                 <div className="mailbox-chip-row">
                   {selectedAccount?.mailboxes.length ? (
-                    selectedAccount.mailboxes.map((mailbox) => (
+                    <>
                       <button
-                        key={mailbox.id}
-                        className={`mailbox-chip subtle ${mailbox.id === selectedMailboxId ? "active" : ""}`}
-                        onClick={() => setSelectedMailboxId(mailbox.id)}
+                        className={`mailbox-chip subtle ${selectedMailboxId === null ? "active" : ""}`}
+                        onClick={() => setSelectedMailboxId(null)}
+                        type="button"
                       >
-                        <strong>{mailbox.displayName}</strong>
-                        <span>{mailbox.emailAddress}</span>
+                        <strong>All mailboxes</strong>
+                        <span>Unified queue for this account</span>
                       </button>
-                    ))
+                      {selectedAccount.mailboxes.map((mailbox) => (
+                        <button
+                          key={mailbox.id}
+                          className={`mailbox-chip subtle ${mailbox.id === selectedMailboxId ? "active" : ""}`}
+                          onClick={() => setSelectedMailboxId(mailbox.id)}
+                          type="button"
+                        >
+                          <strong>{mailbox.displayName}</strong>
+                          <span>{mailbox.emailAddress}</span>
+                        </button>
+                      ))}
+                    </>
                   ) : (
                     <div className="mailbox-chip empty">Choose an account to load mailboxes.</div>
                   )}
@@ -1913,6 +2249,15 @@ export function MailApp() {
                       <p className="reader-copy">{selectedThread.replyState?.reason ?? "No reply-state rationale yet."}</p>
                     </div>
                     <div className="reader-actions">
+                      <button className="icon-button" data-shortcut="U" onClick={() => updateThreadReadState(selectedThread.unreadCount > 0)} type="button" aria-label="Toggle read state">
+                        <CheckCircle2 size={15} />
+                      </button>
+                      <button className="icon-button" data-shortcut="E" onClick={() => updateThreadArchivedState(true)} type="button" aria-label="Archive thread">
+                        <FolderArchive size={15} />
+                      </button>
+                      <button className="icon-button" data-shortcut="L" onClick={() => queueFollowUp(24, "Follow up tomorrow")} type="button" aria-label="Remind later">
+                        <BellRing size={15} />
+                      </button>
                       <button className="icon-button" data-shortcut="R" type="button" aria-label="Reply">
                         <Reply size={15} />
                       </button>
@@ -1934,9 +2279,63 @@ export function MailApp() {
                       <span className="soft-tag">{categoryLabel(latestThreadMessage.category ?? null)}</span>
                     ) : null}
                     <span className="soft-tag">{selectedThread.mailbox.displayName}</span>
+                    {selectedThread.mailbox.kind === "SHARED" ? <span className="soft-tag">Shared mailbox</span> : null}
+                    {selectedThread.archivedAt ? <span className="soft-tag">Archived</span> : null}
                     {selectedThread.replyState?.replyDueAt ? (
                       <span className="soft-tag">Reply by {formatShortDate(selectedThread.replyState.replyDueAt)}</span>
                     ) : null}
+                  </div>
+
+                  <div className="reader-card assistant-card" data-testid="assistant-workbench">
+                    <div className="pane-header">
+                      <div>
+                        <div className="eyebrow">Assistant workbench</div>
+                        <h3>Grounded draft and next move</h3>
+                      </div>
+                      {isAssistantPending ? <LoaderCircle className="spin" size={18} /> : <BrainCircuit size={18} />}
+                    </div>
+
+                    {assistantData ? (
+                      <>
+                        <div className="assistant-route-row">
+                          <span className="soft-tag">{assistantData.routing.providerLabel}</span>
+                          <span className="soft-tag">{assistantData.routing.defaultModel}</span>
+                          <span className="soft-tag">{assistantData.routing.routingMode === "AUTO" ? "Auto route" : "Explicit route"}</span>
+                        </div>
+                        <div className="assistant-brief-grid">
+                          <div className="assistant-brief-card">
+                            <span>Summary</span>
+                            <p>{assistantData.briefing.summary}</p>
+                          </div>
+                          <div className="assistant-brief-card">
+                            <span>Next move</span>
+                            <p>{assistantData.briefing.suggestedNextStep}</p>
+                          </div>
+                          <div className="assistant-brief-card">
+                            <span>Why it matters</span>
+                            <p>{assistantData.briefing.whyItMatters}</p>
+                          </div>
+                          <div className="assistant-brief-card">
+                            <span>Reply signal</span>
+                            <p>{assistantData.briefing.replySignal}</p>
+                          </div>
+                        </div>
+                        <div className="template-row">
+                          {assistantData.draftSuggestions.map((draftSuggestion) => (
+                            <button
+                              key={draftSuggestion.id}
+                              className="template-pill"
+                              onClick={() => applySuggestedDraft(draftSuggestion.id)}
+                              type="button"
+                            >
+                              {draftSuggestion.label}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="reader-copy">Assistant routing will appear here once the selected thread briefing loads.</p>
+                    )}
                   </div>
 
                   <div className="reader-card conversation-card reply-flow-card">
@@ -2001,6 +2400,16 @@ export function MailApp() {
                                 {template.label}
                               </button>
                             ))}
+                            {assistantData?.draftSuggestions.map((draftSuggestion) => (
+                              <button
+                                key={`assistant-${draftSuggestion.id}`}
+                                className="template-pill template-pill-accent"
+                                onClick={() => applySuggestedDraft(draftSuggestion.id)}
+                                type="button"
+                              >
+                                {draftSuggestion.label}
+                              </button>
+                            ))}
                           </div>
                           <textarea
                             className="draft-pad"
@@ -2013,14 +2422,19 @@ export function MailApp() {
                           <div className="composer-toolbar">
                             <div className="composer-meta">
                               <span className="soft-tag">Draft</span>
+                              {assistantData ? <span className="soft-tag">{assistantData.routing.providerLabel}</span> : null}
+                              {selectedThread.mailbox.kind === "SHARED" ? <span className="soft-tag">Shared mailbox</span> : null}
                             </div>
                             <div className="composer-actions">
                               <button className="client-button tertiary" data-shortcut="⌘C" onClick={() => void copyDraft()} type="button">
                                 <Copy size={16} />
                                 Copy
                               </button>
-                              <button className="client-button tertiary" data-shortcut="H" type="button">
+                              <button className="client-button tertiary" data-shortcut="H" onClick={() => queueFollowUp(24, "Send later follow-up")} type="button">
                                 Send later
+                              </button>
+                              <button className="client-button tertiary" data-shortcut="L" onClick={() => queueFollowUp(72, "Check back later this week")} type="button">
+                                Remind Friday
                               </button>
                               <button className="client-button primary" data-shortcut="⌘↵" type="button">
                                 <SendHorizontal size={16} />
@@ -2030,7 +2444,11 @@ export function MailApp() {
                           </div>
                           <div className="composer-footer-note">
                             <span>ai</span>
-                            <p>Trained on your sent mail, templates, and account context.</p>
+                            <p>
+                              {assistantData
+                                ? `Grounded by ${assistantData.routing.providerLabel} on top of deterministic reply-state and mailbox context.`
+                                : "Trained on your sent mail, templates, and account context."}
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -2422,6 +2840,50 @@ export function MailApp() {
               ) : null}
             </aside> : null}
           </div>
+
+          {isCommandPaletteOpen ? (
+            <div className="command-palette-backdrop" onClick={() => setIsCommandPaletteOpen(false)} role="presentation">
+              <div
+                className="command-palette"
+                onClick={(event) => event.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Command palette"
+              >
+                <div className="command-palette-head">
+                  <Command size={16} />
+                  <input
+                    ref={commandInputRef}
+                    className="command-palette-input"
+                    onChange={(event) => setCommandQuery(event.target.value)}
+                    placeholder="Jump to a workspace, action, or settings page"
+                    value={commandQuery}
+                  />
+                </div>
+                <div className="command-palette-list" data-testid="command-palette">
+                  {commandItems.length ? (
+                    commandItems.slice(0, 12).map((item) => (
+                      <button
+                        key={item.id}
+                        className="command-palette-item"
+                        onClick={() => {
+                          item.run();
+                          setIsCommandPaletteOpen(false);
+                          setCommandQuery("");
+                        }}
+                        type="button"
+                      >
+                        <strong>{item.label}</strong>
+                        <span>{item.hint}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="command-palette-empty">No commands match yet.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
     </AppShell>
   );
 }

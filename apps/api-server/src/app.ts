@@ -28,7 +28,8 @@ export function buildApp() {
   });
 
   app.register(cors, {
-    origin: allowedOrigins
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "PUT", "OPTIONS"]
   });
 
   app.register(multipart, {

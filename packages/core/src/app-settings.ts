@@ -151,18 +151,36 @@ export function toPublicModelsSettings(settings: PrivateModelsSettings): PublicM
 }
 
 export async function ensureSettingsRecord() {
-  return prisma.appSettings.upsert({
+  const existingRecord = await prisma.appSettings.findUnique({
     where: {
       singletonKey: SETTINGS_SINGLETON_KEY
-    },
-    update: {},
-    create: {
-      singletonKey: SETTINGS_SINGLETON_KEY,
-      models: toJsonValue(defaultModelsSettings),
-      accounts: toJsonValue(defaultAccountsSettings),
-      workflows: toJsonValue(defaultWorkflowsSettings)
     }
   });
+
+  if (existingRecord) {
+    return existingRecord;
+  }
+
+  try {
+    return await prisma.appSettings.create({
+      data: {
+        singletonKey: SETTINGS_SINGLETON_KEY,
+        models: toJsonValue(defaultModelsSettings),
+        accounts: toJsonValue(defaultAccountsSettings),
+        workflows: toJsonValue(defaultWorkflowsSettings)
+      }
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return prisma.appSettings.findUniqueOrThrow({
+        where: {
+          singletonKey: SETTINGS_SINGLETON_KEY
+        }
+      });
+    }
+
+    throw error;
+  }
 }
 
 export async function getCurrentAppSettings() {

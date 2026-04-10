@@ -12,6 +12,7 @@ type NavItem = {
   href?: Route;
   onSelect?: () => void;
   badge?: string | number | null;
+  testId?: string;
 };
 
 type StatItem = {
@@ -51,14 +52,14 @@ function NavButton({ item }: { item: NavItem }) {
 
   if (item.href) {
     return (
-      <Link className={`nav-button ${item.active ? "active" : ""}`} href={item.href}>
+      <Link className={`nav-button ${item.active ? "active" : ""}`} data-testid={item.testId} href={item.href}>
         {content}
       </Link>
     );
   }
 
   return (
-    <button className={`nav-button ${item.active ? "active" : ""}`} onClick={item.onSelect} type="button">
+    <button className={`nav-button ${item.active ? "active" : ""}`} data-testid={item.testId} onClick={item.onSelect} type="button">
       {content}
     </button>
   );

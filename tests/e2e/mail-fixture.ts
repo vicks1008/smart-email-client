@@ -60,11 +60,8 @@ function message(input: {
 }
 
 export async function cleanupMailFixture() {
-  await prisma.account.deleteMany({
-    where: {
-      email: FIXTURE_ACCOUNT_EMAIL
-    }
-  });
+  await prisma.appSettings.deleteMany();
+  await prisma.account.deleteMany();
 }
 
 export async function seedMailFixture() {

@@ -98,6 +98,7 @@ export type ThreadDetail = {
   participants: Array<{ address: string; name: string }>;
   unreadCount: number;
   lastMessageAt: string;
+  archivedAt?: string | null;
   mailbox: {
     id: string;
     displayName: string;
@@ -207,6 +208,48 @@ export type ImportJobSummary = {
     emailAddress: string;
     displayName: string;
     kind: "PRIMARY" | "SHARED";
+  };
+};
+
+export type ThreadAssistantResponse = {
+  routing: {
+    category: ModelSourceCategory;
+    providerId: string;
+    providerLabel: string;
+    defaultModel: string;
+    routingMode: RoutingMode;
+    analyticsMode: "DETERMINISTIC_ONLY";
+  };
+  briefing: {
+    summary: string;
+    whyItMatters: string;
+    suggestedNextStep: string;
+    replySignal: string;
+    latestMessageAt: string;
+  };
+  draftSuggestions: Array<{
+    id: string;
+    label: string;
+    subject: string;
+    body: string;
+  }>;
+};
+
+export type ThreadActionResult = {
+  thread: {
+    id: string;
+    unreadCount: number;
+    archivedAt: string | null;
+  };
+};
+
+export type ThreadFollowUpActionResult = {
+  task: {
+    id: string;
+    title: string;
+    dueAt: string;
+    note: string | null;
+    status: "PENDING" | "COMPLETED" | "CANCELED";
   };
 };
 
@@ -608,6 +651,97 @@ export async function fetchThreads(mailboxId?: string) {
 
 export async function fetchThread(threadId: string) {
   return apiFetch<{ thread: ThreadDetail }>(`/v1/threads/${threadId}`);
+}
+
+export async function fetchThreadAssistant(threadId: string) {
+  const payload = await apiFetch<{
+    assistant: {
+      modelRouting: {
+        category: ModelSourceCategory;
+        providerId: string;
+        defaultModel: string;
+        routingMode: RoutingMode;
+        analyticsMode: "DETERMINISTIC_ONLY";
+      };
+      groundedThreadIntelligence: {
+        conciseSummary: string;
+        whyItMatters: string;
+        suggestedNextStep: {
+          label: string;
+        };
+        followUpSignal: {
+          status: string;
+        };
+        draftVariants: Array<{
+          id: string;
+          label: string;
+          body: string;
+        }>;
+        context: {
+          latestInboundAt: string | null;
+          latestOutboundAt: string | null;
+        };
+      };
+    };
+  }>(`/v1/threads/${threadId}/assistant`);
+
+  return {
+    routing: {
+      ...payload.assistant.modelRouting,
+      providerLabel: payload.assistant.modelRouting.providerId
+        .split("-")
+        .map((part) => part[0]?.toUpperCase() + part.slice(1))
+        .join(" ")
+    },
+    briefing: {
+      summary: payload.assistant.groundedThreadIntelligence.conciseSummary,
+      whyItMatters: payload.assistant.groundedThreadIntelligence.whyItMatters,
+      suggestedNextStep: payload.assistant.groundedThreadIntelligence.suggestedNextStep.label,
+      replySignal: payload.assistant.groundedThreadIntelligence.followUpSignal.status.replace(/_/g, " ").toLowerCase(),
+      latestMessageAt:
+        payload.assistant.groundedThreadIntelligence.context.latestInboundAt ??
+        payload.assistant.groundedThreadIntelligence.context.latestOutboundAt ??
+        new Date().toISOString()
+    },
+    draftSuggestions: payload.assistant.groundedThreadIntelligence.draftVariants.map((variant) => ({
+      id: variant.id,
+      label: variant.label,
+      subject: variant.label,
+      body: variant.body
+    }))
+  } satisfies ThreadAssistantResponse;
+}
+
+export async function setThreadReadState(threadId: string, read: boolean) {
+  return apiFetch<{
+    thread: ThreadActionResult["thread"];
+  }>(`/v1/threads/${threadId}/actions/${read ? "mark-read" : "mark-unread"}`, {
+    method: "POST",
+  }).then((payload) => ({
+    thread: payload.thread
+  }));
+}
+
+export async function setThreadArchivedState(threadId: string, archived: boolean) {
+  return apiFetch<{
+    thread: ThreadActionResult["thread"];
+  }>(`/v1/threads/${threadId}/actions/${archived ? "archive" : "unarchive"}`, {
+    method: "POST"
+  }).then((payload) => ({
+    thread: payload.thread
+  }));
+}
+
+export async function createThreadFollowUp(threadId: string, payload: { dueAt: string; note?: string; title?: string }) {
+  return apiFetch<{
+    thread: ThreadActionResult["thread"];
+    followUpTask: ThreadFollowUpActionResult["task"];
+  }>(`/v1/threads/${threadId}/actions/follow-up`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  }).then((response) => ({
+    task: response.followUpTask
+  }));
 }
 
 export async function fetchWorkbench(mailboxId?: string) {

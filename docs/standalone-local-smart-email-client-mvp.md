@@ -221,3 +221,6 @@ The current implementation now includes:
 - model-source categories for `Local provider`, `Cloud API token`, and `OAuth-connected assistant`
 - explicit `DETERMINISTIC_ONLY` handling for analytics so model routing does not affect mailbox intelligence
 - initial keyboard-first `/mail` shortcuts for search focus, list movement, composer focus, and escape-to-reset behavior
+- a unified `/mail` queue across imported mailboxes with `All`, `Personal`, and `Shared` scope filters
+- a thread-level assistant workbench that shows routed model context, deterministic briefing data, and grounded draft variants
+- a command palette plus first-pass triage actions for archive, read state, and follow-up scheduling inside the reader
