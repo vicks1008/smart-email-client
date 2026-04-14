@@ -26,7 +26,7 @@ const envSchema = z.object({
   OUTLOOK_MCP_AUTH_SERVER_URL: z.string().url().default("http://127.0.0.1:3333"),
   OUTLOOK_MCP_TOKEN_STORE_PATH: optionalString,
   OUTLOOK_MCP_SCOPES: optionalString,
-  APPLE_MAIL_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(60)
+  APPLE_MAIL_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(180)
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

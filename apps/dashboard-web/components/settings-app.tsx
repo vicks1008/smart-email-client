@@ -20,6 +20,8 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import {
+  fetchAppleMailAccounts,
+  fetchAppleMailFolders,
   fetchAccounts,
   fetchModelProviderCatalog,
   fetchSettings,
@@ -28,6 +30,8 @@ import {
   updateWorkflowsSettings,
   type AccountSummary,
   type AccountsSettings,
+  type AppleMailAccount,
+  type AppleMailFolder,
   type ModelProvider,
   type ModelProviderCatalog,
   type ModelsSettings,
@@ -54,14 +58,24 @@ const queueLabels: Record<WorkflowsSettings["replyQueueDefault"], string> = {
 const categoryLabels: Record<ModelsSettings["enrichmentSource"]["category"], string> = {
   LOCAL_PROVIDER: "Local provider",
   CLOUD_API_TOKEN: "Cloud API token",
-  OAUTH_CONNECTED_ASSISTANT: "OAuth-connected assistant"
+  COMPANION_ASSISTANT: "Companion assistant"
+};
+
+const categoryStatLabels: Record<ModelsSettings["enrichmentSource"]["category"], string> = {
+  LOCAL_PROVIDER: "Local provider",
+  CLOUD_API_TOKEN: "Cloud token",
+  COMPANION_ASSISTANT: "Companion"
 };
 
 const categoryDescriptions: Record<ModelsSettings["enrichmentSource"]["category"], string> = {
   LOCAL_PROVIDER: "Run enrichment against LM Studio, Ollama, or another local OpenAI-compatible endpoint.",
   CLOUD_API_TOKEN: "Use a hosted provider with a direct API token for drafting, summarization, and enrichment.",
-  OAUTH_CONNECTED_ASSISTANT: "Reserve a path for ChatGPT, Codex, or similar assistant connections when they are supported cleanly."
+  COMPANION_ASSISTANT: "Reserved for a future companion integration that can sit on top of the same deterministic mailbox graph."
 };
+
+const desktopModelCategories = ["LOCAL_PROVIDER", "CLOUD_API_TOKEN"] as const satisfies ReadonlyArray<
+  ModelsSettings["enrichmentSource"]["category"]
+>;
 
 const routingModes = [
   {
@@ -73,12 +87,6 @@ const routingModes = [
     label: "Explicit"
   }
 ] as const;
-
-const oauthStatusTone: Record<ModelsSettings["enrichmentSource"]["oauthStatus"], string> = {
-  NOT_CONNECTED: "warning",
-  CONNECTED: "active",
-  COMING_SOON: "neutral"
-};
 
 const sectionContent = {
   models: {
@@ -108,6 +116,15 @@ function countSharedMailboxes(accounts: AccountSummary[]) {
   );
 }
 
+function countAppleMailSharedMailboxCandidates(folders: AppleMailFolder[]) {
+  return new Set(
+    folders
+      .filter((folder) => folder.depth === 0 && folder.type === "custom" && folder.name.includes("@"))
+      .map((folder) => folder.name.trim().toLowerCase())
+      .filter(Boolean)
+  ).size;
+}
+
 function providerDescription(provider: ModelProvider) {
   switch (provider.id) {
     case "ollama":
@@ -125,9 +142,9 @@ function providerDescription(provider: ModelProvider) {
     case "openrouter":
       return "Route across multiple hosted models while keeping provider choice flexible.";
     case "chatgpt":
-      return "OAuth-connected assistant path reserved for future clean product integration.";
+      return "ChatGPT account sign-in is not exposed as a third-party OAuth flow for this app today. Use OpenAI API for supported routing.";
     case "codex":
-      return "OAuth-connected assistant path for agentic workflows when the product path is ready.";
+      return "Codex account sign-in works in OpenAI-owned surfaces, but not as a public third-party OAuth connection for this app.";
     default:
       return "Model provider routing for assistant workflows layered on top of deterministic intelligence.";
   }
@@ -136,6 +153,8 @@ function providerDescription(provider: ModelProvider) {
 export function SettingsApp({ section }: { section: SettingsSection }) {
   const [settings, setSettings] = useState<SettingsPayload | null>(null);
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
+  const [appleMailAccounts, setAppleMailAccounts] = useState<AppleMailAccount[]>([]);
+  const [appleMailFolders, setAppleMailFolders] = useState<AppleMailFolder[]>([]);
   const [catalog, setCatalog] = useState<ModelProviderCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSaving, startSaveTransition] = useTransition();
@@ -157,6 +176,19 @@ export function SettingsApp({ section }: { section: SettingsSection }) {
       });
   }, []);
 
+  useEffect(() => {
+    void Promise.allSettled([fetchAppleMailAccounts(), fetchAppleMailFolders()])
+      .then(([accountsResult, foldersResult]) => {
+        if (accountsResult.status === "fulfilled") {
+          setAppleMailAccounts(accountsResult.value.accounts);
+        }
+
+        if (foldersResult.status === "fulfilled") {
+          setAppleMailFolders(foldersResult.value.folders);
+        }
+      });
+  }, []);
+
   const providerOptions = useMemo(() => {
     if (!catalog || !settings) {
       return [];
@@ -175,6 +207,30 @@ export function SettingsApp({ section }: { section: SettingsSection }) {
     );
   }, [providerOptions, settings]);
 
+  const accountStats = useMemo(() => {
+    if (!settings) {
+      return {
+        accountLabel: "Accounts",
+        accountValue: 0,
+        sharedValue: 0
+      };
+    }
+
+    if (settings.accounts.preferredLiveSource === "APPLE_MAIL") {
+      return {
+        accountLabel: "Apple Mail accounts",
+        accountValue: appleMailAccounts.length,
+        sharedValue: countAppleMailSharedMailboxCandidates(appleMailFolders)
+      };
+    }
+
+    return {
+      accountLabel: "Imported accounts",
+      accountValue: accounts.length,
+      sharedValue: countSharedMailboxes(accounts)
+    };
+  }, [accounts, appleMailAccounts, appleMailFolders, settings]);
+
   const stats = useMemo(() => {
     if (!settings) {
       return [];
@@ -183,15 +239,15 @@ export function SettingsApp({ section }: { section: SettingsSection }) {
     if (section === "models") {
       return [
         { label: "Analytics", value: "Deterministic" },
-        { label: "Source", value: categoryLabels[settings.models.enrichmentSource.category] },
+        { label: "Source", value: categoryStatLabels[settings.models.enrichmentSource.category] },
         { label: "Routing", value: settings.models.enrichmentSource.routingMode === "AUTO" ? "Auto" : "Explicit" }
       ];
     }
 
     if (section === "accounts") {
       return [
-        { label: "Accounts", value: accounts.length },
-        { label: "Shared", value: countSharedMailboxes(accounts) },
+        { label: accountStats.accountLabel, value: accountStats.accountValue },
+        { label: "Shared", value: accountStats.sharedValue },
         { label: "Live", value: liveSourceLabels[settings.accounts.preferredLiveSource] }
       ];
     }
@@ -201,7 +257,7 @@ export function SettingsApp({ section }: { section: SettingsSection }) {
       { label: "Follow-up", value: `${settings.workflows.followUpSlaHours}h` },
       { label: "Toasts", value: settings.workflows.stackToasts ? "Stacked" : "Single" }
     ];
-  }, [accounts, section, settings]);
+  }, [accountStats, section, settings]);
 
   function updateModelSettings(next: Partial<ModelsSettings["enrichmentSource"]>) {
     setSettings((current) => {
@@ -226,7 +282,7 @@ export function SettingsApp({ section }: { section: SettingsSection }) {
             ...next,
             providerId: currentProviderId,
             oauthStatus:
-              category === "OAUTH_CONNECTED_ASSISTANT"
+              category === "COMPANION_ASSISTANT"
                 ? next.oauthStatus ?? current.models.enrichmentSource.oauthStatus
                 : "NOT_CONNECTED"
           }
@@ -327,8 +383,13 @@ export function SettingsApp({ section }: { section: SettingsSection }) {
                   <span className="soft-tag">{categoryLabels[settings.models.enrichmentSource.category]}</span>
                 </div>
 
+                <p className="settings-note">
+                  The desktop app currently supports local providers and cloud API tokens. Companion assistant integrations can be
+                  added later without changing the deterministic mailbox graph underneath.
+                </p>
+
                 <div className="settings-choice-grid">
-                  {(Object.keys(categoryLabels) as Array<ModelsSettings["enrichmentSource"]["category"]>).map((category) => (
+                  {desktopModelCategories.map((category) => (
                     <button
                       key={category}
                       className={`settings-choice-card ${settings.models.enrichmentSource.category === category ? "active" : ""}`}
@@ -339,10 +400,7 @@ export function SettingsApp({ section }: { section: SettingsSection }) {
                           providerId: categoryProviders[0]?.id ?? settings.models.enrichmentSource.providerId,
                           baseUrl: categoryProviders[0]?.defaultBaseUrl ?? null,
                           apiToken: category === "CLOUD_API_TOKEN" ? settings.models.enrichmentSource.apiToken : "",
-                          oauthStatus:
-                            category === "OAUTH_CONNECTED_ASSISTANT"
-                              ? categoryProviders[0]?.oauthStatus ?? settings.models.enrichmentSource.oauthStatus
-                              : "NOT_CONNECTED"
+                          oauthStatus: "NOT_CONNECTED"
                         });
                       }}
                       type="button"
@@ -448,30 +506,64 @@ export function SettingsApp({ section }: { section: SettingsSection }) {
                 </div>
               </div>
 
-              {settings.models.enrichmentSource.category === "OAUTH_CONNECTED_ASSISTANT" ? (
-                <div className="settings-section-card">
+                  {settings.models.enrichmentSource.category === "COMPANION_ASSISTANT" ? (
+                    <div className="settings-section-card">
                   <div className="pane-header">
                     <div>
-                      <div className="eyebrow">Assistant connection</div>
-                      <h3>OAuth status</h3>
+                      <div className="eyebrow">Companion path</div>
+                      <h3>Not active in the desktop app</h3>
                     </div>
-                    <span className={`status-tag ${oauthStatusTone[settings.models.enrichmentSource.oauthStatus]}`}>
-                      {settings.models.enrichmentSource.oauthStatus.replace(/_/g, " ").toLowerCase()}
-                    </span>
+                    <span className="status-tag neutral">Companion only</span>
                   </div>
 
                   <p className="settings-note">
-                    OAuth-connected assistants are optional and should layer on top of the mailbox graph, not replace deterministic
-                    intelligence.
+                    ChatGPT/Codex-style companion integrations are not enabled in the local desktop app right now. The supported
+                    paths here are local providers and direct cloud API tokens.
                   </p>
+                  <p className="settings-note">
+                    The app stays ready for a future companion integration, but the mailbox and deterministic analytics foundation
+                    remain local-first.
+                  </p>
+                  <div className="settings-inline-actions">
+                    <button
+                      className="client-button secondary"
+                          onClick={() =>
+                            updateModelSettings({
+                              category: "LOCAL_PROVIDER",
+                              providerId: "ollama",
+                              baseUrl: "http://127.0.0.1:11434",
+                          oauthStatus: "NOT_CONNECTED"
+                        })
+                      }
+                      type="button"
+                    >
+                      <ServerCog size={16} />
+                      Switch to local provider
+                    </button>
+                    <button
+                      className="client-button secondary"
+                          onClick={() =>
+                            updateModelSettings({
+                              category: "CLOUD_API_TOKEN",
+                              providerId: "openai",
+                              baseUrl: null,
+                          oauthStatus: "NOT_CONNECTED"
+                        })
+                      }
+                      type="button"
+                    >
+                      <Cloud size={16} />
+                      Switch to OpenAI API
+                    </button>
+                  </div>
                   <div className="soft-panel">
                     <div className="metric-row">
                       <span>Connection</span>
                       <strong>{settings.models.enrichmentSource.oauthAccountLabel ?? "No assistant connected yet"}</strong>
                     </div>
                     <div className="metric-row">
-                      <span>Status</span>
-                      <strong>{settings.models.enrichmentSource.oauthStatus.replace(/_/g, " ").toLowerCase()}</strong>
+                      <span>Desktop mode</span>
+                      <strong>Local or API token only</strong>
                     </div>
                   </div>
                 </div>
@@ -651,14 +743,14 @@ export function SettingsApp({ section }: { section: SettingsSection }) {
               </div>
               <RefreshCcw size={18} />
             </div>
-            <div className="metric-stack">
+              <div className="metric-stack">
               <div className="metric-row">
-                <span>Imported accounts</span>
-                <strong>{accounts.length}</strong>
+                <span>{accountStats.accountLabel}</span>
+                <strong>{accountStats.accountValue}</strong>
               </div>
               <div className="metric-row">
                 <span>Shared mailboxes</span>
-                <strong>{countSharedMailboxes(accounts)}</strong>
+                <strong>{accountStats.sharedValue}</strong>
               </div>
               <div className="metric-row">
                 <span>Preferred live source</span>

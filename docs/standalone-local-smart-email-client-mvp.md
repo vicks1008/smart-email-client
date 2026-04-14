@@ -66,6 +66,7 @@ Use a layered approach:
 
 1. `Mailbox layer`
    Apple Mail, Microsoft Graph, Thunderbird, and archive import
+   Apple Mail on macOS should support both live browse/read and a lightweight structured ingest so the deterministic queue is never empty when Mail.app is already configured locally
 2. `Deterministic intelligence layer`
    organizations, contacts, categories, reply-state, follow-up tasks, and activity analytics
 3. `Model layer`
@@ -86,7 +87,7 @@ Recommended provider strategy:
 - `Ollama` for truly local models without API spend
 - `LM Studio` and other local OpenAI-compatible endpoints for local model routing
 - `Cloud API token` providers for hosted models when desired
-- `OAuth-connected assistants` such as ChatGPT or Codex when supported
+- `Companion assistant integrations` such as ChatGPT or Codex when a clean companion flow is worth adding
 
 Recommended local model tiers:
 
@@ -218,7 +219,7 @@ The current implementation now includes:
 - a first-class routed `Settings` surface at `/settings/models`, `/settings/accounts`, and `/settings/workflows`
 - persisted app settings through the local API and database
 - `Settings -> Models` with a `Model source for enrichment` field
-- model-source categories for `Local provider`, `Cloud API token`, and `OAuth-connected assistant`
+- model-source categories for `Local provider`, `Cloud API token`, and `Companion assistant`
 - explicit `DETERMINISTIC_ONLY` handling for analytics so model routing does not affect mailbox intelligence
 - initial keyboard-first `/mail` shortcuts for search focus, list movement, composer focus, and escape-to-reset behavior
 - a unified `/mail` queue across imported mailboxes with `All`, `Personal`, and `Shared` scope filters

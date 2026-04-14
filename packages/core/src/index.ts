@@ -37,6 +37,7 @@ export { applyThreadIntelligence, inferMailboxRole, rebuildIntelligence } from "
 export {
   getAppleMailMessageDetail,
   getAppleMailRecentMessages,
+  getAppleMailRecentMessagesFromFolder,
   getAppleMailStatus,
   listAppleMailAccounts,
   listAppleMailFolders,
@@ -47,6 +48,14 @@ export {
   type AppleMailMessageSummary,
   type AppleMailStatus
 } from "./apple-mail";
+export {
+  ingestAppleMailAccountSummariesIntoWorkbench,
+  syncAllAppleMailAccountsIntoWorkbench,
+  syncAppleMailAccountIntoWorkbench,
+  syncPersistedAppleMailAccountIntoWorkbench,
+  type AppleMailSummaryIngestPayload,
+  type AppleMailSyncResult
+} from "./apple-mail-sync";
 export {
   getOutlookMcpAuthUrl,
   getOutlookMcpMessageDetail,

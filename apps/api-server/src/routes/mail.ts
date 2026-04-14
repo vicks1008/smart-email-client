@@ -1,4 +1,10 @@
-import { MailboxKind, SyncTrigger, prisma, queueAccountSync, registerMailbox } from "@smart-email/core";
+import {
+  MailboxKind,
+  SyncTrigger,
+  prisma,
+  queueAccountSync,
+  registerMailbox
+} from "@smart-email/core";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -66,6 +72,12 @@ export async function registerMailRoutes(app: FastifyInstance) {
     if (!account) {
       return reply.status(404).send({
         error: "Account not found."
+      });
+    }
+
+    if (account.provider !== "MICROSOFT") {
+      return reply.status(400).send({
+        error: "This account does not support live sync."
       });
     }
 

@@ -5,11 +5,10 @@ import { prisma } from "./db";
 
 const SETTINGS_SINGLETON_KEY = "default";
 
-export const modelSourceCategorySchema = z.enum([
-  "LOCAL_PROVIDER",
-  "CLOUD_API_TOKEN",
-  "OAUTH_CONNECTED_ASSISTANT"
-]);
+export const modelSourceCategorySchema = z.preprocess(
+  (value) => (value === "OAUTH_CONNECTED_ASSISTANT" ? "COMPANION_ASSISTANT" : value),
+  z.enum(["LOCAL_PROVIDER", "CLOUD_API_TOKEN", "COMPANION_ASSISTANT"])
+);
 
 export const routingModeSchema = z.enum(["AUTO", "EXPLICIT"]);
 export const oauthStatusSchema = z.enum(["NOT_CONNECTED", "CONNECTED", "COMING_SOON"]);
@@ -265,7 +264,7 @@ export function getModelProviders() {
     {
       id: "chatgpt",
       name: "ChatGPT",
-      category: "OAUTH_CONNECTED_ASSISTANT",
+      category: "COMPANION_ASSISTANT",
       defaultBaseUrl: null,
       supportsBaseUrl: false,
       supportsApiToken: false,
@@ -275,7 +274,7 @@ export function getModelProviders() {
     {
       id: "codex",
       name: "Codex",
-      category: "OAUTH_CONNECTED_ASSISTANT",
+      category: "COMPANION_ASSISTANT",
       defaultBaseUrl: null,
       supportsBaseUrl: false,
       supportsApiToken: false,

@@ -59,7 +59,7 @@ import {
   fetchThunderbirdSyncSources,
   fetchOrganizationActivity,
   fetchWorkbench,
-  getMicrosoftConnectUrl,
+  ingestAppleMailAccount,
   queueSync,
   setThreadArchivedState,
   setThreadReadState,
@@ -361,6 +361,10 @@ function matchesMailboxScope(
   return scope === "shared" ? isShared : !isShared;
 }
 
+function appleMailFoldersForStructuredSync(folders: ThunderbirdFolder[]) {
+  return folders.filter((folder) => folder.type === "inbox" || folder.type === "sent" || (folder.type === "custom" && folder.name.includes("@")));
+}
+
 function normalizeCommandText(value: string) {
   return value
     .toLowerCase()
@@ -433,6 +437,7 @@ export function MailApp() {
   const [isImportPending, startImportTransition] = useTransition();
   const [isThunderbirdImportPending, startThunderbirdImportTransition] = useTransition();
   const [isThunderbirdBulkImportPending, startThunderbirdBulkImportTransition] = useTransition();
+  const [hasAttemptedInitialAppleSync, setHasAttemptedInitialAppleSync] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const draftPadRef = useRef<HTMLTextAreaElement>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -475,6 +480,39 @@ export function MailApp() {
     void refreshThunderbirdDiscovery();
     void refreshArchiveAccounts();
   }, []);
+
+  useEffect(() => {
+    if (loading || hasAttemptedInitialAppleSync) {
+      return;
+    }
+
+    if (accounts.length > 0) {
+      setHasAttemptedInitialAppleSync(true);
+      return;
+    }
+
+    if (!thunderbirdStatus?.available || thunderbirdAccounts.length === 0) {
+      return;
+    }
+
+    setHasAttemptedInitialAppleSync(true);
+    startSyncTransition(async () => {
+      try {
+        const result = await syncLiveAppleMailIntoWorkspace(3);
+        const importedMessages = result.syncs.reduce((total, sync) => total + sync.importedMessages, 0);
+        toast.success(
+          importedMessages > 0
+            ? `Loaded ${importedMessages} recent Apple Mail message${importedMessages === 1 ? "" : "s"} into the workspace.`
+            : "Apple Mail is connected, but there were no recent messages to load."
+        );
+        await refreshArchiveAccounts();
+        await refreshWorkbench();
+        await refreshThreads();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to load Apple Mail into the workspace.");
+      }
+    });
+  }, [accounts.length, hasAttemptedInitialAppleSync, loading, startSyncTransition, thunderbirdAccounts.length, thunderbirdStatus]);
 
   useEffect(() => {
     if (!selectedThunderbirdAccountId) {
@@ -694,6 +732,46 @@ export function MailApp() {
     ]);
   }
 
+  async function ingestLiveAppleMailAccount(account: ThunderbirdAccount, maxMessagesPerFolder = 3) {
+    const foldersData = await fetchThunderbirdFolders(account.id);
+    const targetFolders = appleMailFoldersForStructuredSync(foldersData.folders);
+    const messagesByFolder: Array<{ folderPath: string; messages: ThunderbirdMessageSummary[] }> = [];
+
+    for (const folder of targetFolders) {
+      const data = await fetchThunderbirdRecentMessages(folder.path, account.id);
+      messagesByFolder.push({
+        folderPath: folder.path,
+        messages: data.messages.slice(0, maxMessagesPerFolder)
+      });
+    }
+
+    return ingestAppleMailAccount({
+      account,
+      folders: foldersData.folders,
+      messagesByFolder
+    });
+  }
+
+  async function syncLiveAppleMailIntoWorkspace(maxMessagesPerFolder = 3, preferredAccountEmail?: string | null) {
+    const normalizedPreferredEmail = preferredAccountEmail?.trim().toLowerCase() ?? "";
+    const candidateAccounts = normalizedPreferredEmail
+      ? thunderbirdAccounts.filter((account) =>
+          account.identities.some((identity) => identity.email.trim().toLowerCase() === normalizedPreferredEmail)
+        )
+      : thunderbirdAccounts;
+    const liveAccounts = candidateAccounts.length > 0 ? candidateAccounts : thunderbirdAccounts;
+    const syncs = [];
+
+    for (const account of liveAccounts) {
+      const result = await ingestLiveAppleMailAccount(account, maxMessagesPerFolder);
+      syncs.push(...result.syncs);
+    }
+
+    return {
+      syncs
+    };
+  }
+
   function applySuggestedDraft(variantId?: string) {
     if (!assistantData?.draftSuggestions.length) {
       return;
@@ -777,7 +855,9 @@ export function MailApp() {
         const nextAccount =
           data.accounts.find((account) => account.id === currentAccountId) ?? data.accounts[0] ?? null;
         const nextMailboxId =
-          nextAccount?.mailboxes.find((mailbox) => mailbox.id === selectedMailboxId)?.id ?? null;
+          nextAccount?.mailboxes.find((mailbox) => mailbox.id === selectedMailboxId)?.id ??
+          nextAccount?.mailboxes[0]?.id ??
+          null;
 
         setSelectedAccountId(nextAccount?.id ?? null);
         setSelectedMailboxId(nextMailboxId);
@@ -844,20 +924,28 @@ export function MailApp() {
       return;
     }
 
-    if (selectedAccount.provider !== "MICROSOFT") {
-      toast.error("Archive-only accounts do not support live OAuth sync.");
+    if (selectedAccount.provider === "ARCHIVE") {
+      toast.error("Archive-only accounts do not support live sync.");
       return;
     }
 
     startSyncTransition(async () => {
       try {
-        const result = await queueSync(selectedAccount.id);
-        toast.success(`Queued ${result.queued} mailbox sync${result.queued === 1 ? "" : "s"}.`);
+        if (selectedAccount.provider === "APPLE_MAIL") {
+          const result = await syncLiveAppleMailIntoWorkspace(3, selectedAccount.email);
+          const importedMessages = result.syncs.reduce((total, sync) => total + sync.importedMessages, 0);
+          toast.success(
+            importedMessages > 0
+              ? `Synced ${importedMessages} Apple Mail message${importedMessages === 1 ? "" : "s"} into the workspace.`
+              : "Apple Mail sync completed."
+          );
+        } else {
+          const result = await queueSync(selectedAccount.id);
+          toast.success(`Queued ${result.queued} mailbox sync${result.queued === 1 ? "" : "s"}.`);
+        }
         await refreshArchiveAccounts();
         await refreshWorkbench(selectedMailboxId ?? undefined);
-        if (selectedMailboxId) {
-          await refreshThreads(selectedMailboxId);
-        }
+        await refreshThreads(selectedMailboxId ?? undefined);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to queue sync.");
       }
@@ -1616,13 +1704,13 @@ export function MailApp() {
                 <>
                   <button
                     className="client-button primary"
-                    data-shortcut="C"
-                    onClick={() => (window.location.href = getMicrosoftConnectUrl(`${window.location.origin}/mail`))}
+                    onClick={() => router.push("/settings/accounts")}
+                    type="button"
                   >
                     <MailPlus size={16} />
-                    Connect
+                    Accounts
                   </button>
-                  <button className="client-button secondary" data-shortcut="S" disabled={isSyncPending} onClick={() => void handleManualSync()}>
+                  <button className="client-button secondary" disabled={isSyncPending} onClick={() => void handleManualSync()}>
                     <FolderSync size={16} />
                     Sync mailbox
                   </button>

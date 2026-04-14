@@ -9,6 +9,7 @@ datasource db {
 enum AccountProvider {
   MICROSOFT
   ARCHIVE
+  APPLE_MAIL
 }
 
 enum AccountStatus {

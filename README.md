@@ -143,7 +143,7 @@ Supported model-source categories should include:
   Examples: `Ollama`, `LM Studio`, and compatible local OpenAI-style endpoints
 - `Cloud API token`
   Examples: OpenAI API, Groq API, Anthropic API, OpenRouter, or similar token-based providers
-- `OAuth-connected assistant`
+- `Companion assistant integration`
   Examples: `ChatGPT`, `Codex`, or similar OAuth-based model products if and when supported cleanly
 
 The model source should support both:
@@ -158,7 +158,7 @@ The product should preserve the principle that deterministic analytics and mailb
 The app currently supports multiple ways to get mail into the same intelligence layer:
 
 - Microsoft OAuth and Graph for first-party mailbox access
-- Apple Mail live access through Mail.app Automation on macOS
+- Apple Mail live access through Mail.app Automation on macOS, with structured summary ingest into the deterministic workbench
 - Outlook MCP auth-sidecar plus Graph-backed live browsing on localhost
 - Thunderbird MCP for local live mailbox access
 - Outlook archive import via `.olm`
@@ -168,7 +168,7 @@ On macOS, Apple Mail is now the most practical zero-admin live source. First-par
 
 ## Apple Mail Live Source
 
-The app now supports a local Apple Mail live route by reading Mail.app on this Mac through Automation. This avoids Azure consent and Outlook Web scraping while preserving the same `/mail` workspace structure.
+The app now supports a local Apple Mail route by reading Mail.app on this Mac through Automation. That live surface is paired with a structured summary-ingest path so `/mail` can seed the deterministic mailbox graph without Azure consent or Outlook Web scraping.
 
 Local setup on this machine:
 
@@ -188,9 +188,9 @@ On first access, macOS may prompt for:
 - `System Settings` -> `Privacy & Security` -> `Automation`
 - allow your terminal or desktop app to control `Mail`
 
-Then open `/mail` and use `Refresh live`. If Mail.app is open and syncing, the live workspace should populate without a separate sign-in helper.
+Then open `/mail`. If Mail.app is open and syncing, the app can browse live mail immediately and seed the structured queue from recent Apple Mail summaries without a separate sign-in helper.
 
-The upstream `apple-mail-mcp` repo is bundled locally in `tools/apple-mail-mcp`, but the app currently uses the in-repo Apple Mail adapter for live browse/read because it is more stable than the upstream mailbox listing/search output for this MVP slice.
+The upstream `apple-mail-mcp` repo is bundled locally in `tools/apple-mail-mcp`, but the app currently uses the in-repo Apple Mail adapter for live browse plus summary ingest because it is more stable than the upstream mailbox listing/search output for this MVP slice.
 
 ## Outlook MCP Live Source
 
@@ -231,4 +231,4 @@ When making product decisions in this repo, optimize for:
 - read/write/send mailbox support, not read-only tooling
 - shared mailbox support as a first-class requirement
 - a real AI email workspace, not just sync infrastructure
-- a persistent settings surface for model-source control, including local models, API tokens, and OAuth-connected assistants
+- a persistent settings surface for model-source control, including local models, API tokens, and future companion assistant integrations

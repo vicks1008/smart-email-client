@@ -16,7 +16,7 @@ function getApiBaseUrl() {
 
 export type AccountSummary = {
   id: string;
-  provider: "MICROSOFT" | "ARCHIVE";
+  provider: "MICROSOFT" | "ARCHIVE" | "APPLE_MAIL";
   email: string;
   displayName: string | null;
   status: "ACTIVE" | "NEEDS_REAUTH" | "DISCONNECTED";
@@ -427,6 +427,31 @@ export type AppleMailMessageDetail = AppleMailMessageSummary & {
   }>;
 };
 
+export type AppleMailSyncResult = {
+  syncs: Array<{
+    account: {
+      id: string;
+      email: string;
+      displayName: string | null;
+    };
+    mailbox: {
+      id: string;
+      emailAddress: string;
+      displayName: string;
+      kind: "PRIMARY" | "SHARED";
+    };
+    importedMessages: number;
+    folders: Array<{
+      path: string;
+      name: string;
+      type: string;
+      availableMessages: number;
+      importedMessages: number;
+      unreadMessages: number;
+    }>;
+  }>;
+};
+
 export type ThunderbirdStatus = {
   available: boolean;
   profilePaths: string[];
@@ -559,7 +584,7 @@ export type ThunderbirdSyncSource = {
   };
 };
 
-export type ModelSourceCategory = "LOCAL_PROVIDER" | "CLOUD_API_TOKEN" | "OAUTH_CONNECTED_ASSISTANT";
+export type ModelSourceCategory = "LOCAL_PROVIDER" | "CLOUD_API_TOKEN" | "COMPANION_ASSISTANT";
 export type RoutingMode = "AUTO" | "EXPLICIT";
 export type OAuthConnectionStatus = "NOT_CONNECTED" | "CONNECTED" | "COMING_SOON";
 
@@ -809,6 +834,39 @@ export async function fetchAppleMailMessage(messageId: string, folderPath?: stri
   }
 
   return apiFetch<{ message: AppleMailMessageDetail }>(`/v1/apple-mail/messages/detail?${params.toString()}`);
+}
+
+export async function syncAppleMailAccount(payload: {
+  accountId: string;
+  maxMessagesPerFolder?: number;
+}) {
+  return apiFetch<AppleMailSyncResult>("/v1/apple-mail/sync", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function syncAllAppleMailAccounts(payload?: {
+  maxMessagesPerFolder?: number;
+}) {
+  return apiFetch<AppleMailSyncResult>("/v1/apple-mail/sync-all", {
+    method: "POST",
+    body: JSON.stringify(payload ?? {})
+  });
+}
+
+export async function ingestAppleMailAccount(payload: {
+  account: AppleMailAccount;
+  folders: AppleMailFolder[];
+  messagesByFolder: Array<{
+    folderPath: string;
+    messages: AppleMailMessageSummary[];
+  }>;
+}) {
+  return apiFetch<AppleMailSyncResult>("/v1/apple-mail/ingest", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function searchAppleMailMessages(query: string, folderPath?: string, accountId?: string) {

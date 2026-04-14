@@ -5,6 +5,7 @@ import { getEnv } from "./env";
 
 const execFileAsync = promisify(execFile);
 const DETAIL_DELIMITER = "<<<SMART_EMAIL_BODY>>>";
+const RECORD_DELIMITER = "<<<SMART_EMAIL_RECORD>>>";
 const FIELD_DELIMITER = "|||";
 const LIST_DELIMITER = ";;";
 
@@ -77,6 +78,8 @@ export type AppleMailMessageDetail = AppleMailMessageSummary & {
   }>;
 };
 
+export type AppleMailSyncMessage = AppleMailMessageDetail;
+
 type ParsedFolderPath = {
   accountName: string;
   mailboxName: string;
@@ -112,16 +115,32 @@ function parseFolderPath(folderPath: string): ParsedFolderPath {
 
 async function runAppleScript(script: string) {
   const env = getEnv();
-  const { stdout, stderr } = await execFileAsync("/usr/bin/osascript", ["-e", script], {
-    timeout: env.APPLE_MAIL_TIMEOUT_SECONDS * 1000,
-    maxBuffer: 10 * 1024 * 1024
-  });
+  const maxAttempts = 3;
 
-  if (stderr?.trim()) {
-    throw new Error(stderr.trim());
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const { stdout, stderr } = await execFileAsync("/usr/bin/osascript", ["-e", script], {
+        timeout: env.APPLE_MAIL_TIMEOUT_SECONDS * 1000,
+        maxBuffer: 10 * 1024 * 1024
+      });
+
+      if (stderr?.trim()) {
+        throw new Error(stderr.trim());
+      }
+
+      return stdout.trim();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Apple Mail automation failed.";
+      const isTimeout = message.includes("AppleEvent timed out") || message.includes("timed out");
+      if (!isTimeout || attempt === maxAttempts) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+    }
   }
 
-  return stdout.trim();
+  throw new Error("Apple Mail automation failed.");
 }
 
 async function listAccountsRaw() {
@@ -207,6 +226,8 @@ function mapSummaryRecord(
     id: string;
     subject: string;
     sender: string;
+    recipients: string;
+    ccList: string;
     dateReceived: string | null;
     readStatus: boolean;
     flagged: boolean;
@@ -218,7 +239,8 @@ function mapSummaryRecord(
     id: record.id,
     subject: record.subject || "(no subject)",
     author: record.sender || "Unknown sender",
-    recipients: accountName,
+    recipients: record.recipients || accountName,
+    ccList: record.ccList || undefined,
     date: record.dateReceived,
     folder: mailboxName,
     folderPath: encodeFolderPath(accountName, mailboxName),
@@ -259,7 +281,20 @@ async function searchMailboxMessages(input: {
           set msgDate to date received of msg as text
           set msgRead to read status of msg as text
           set msgFlagged to flagged status of msg as text
-          set end of outputLines to msgId & "${FIELD_DELIMITER}" & msgSubject & "${FIELD_DELIMITER}" & msgSender & "${FIELD_DELIMITER}" & msgDate & "${FIELD_DELIMITER}" & msgRead & "${FIELD_DELIMITER}" & msgFlagged
+          set oldDelims to AppleScript's text item delimiters
+          set AppleScript's text item delimiters to "${LIST_DELIMITER}"
+          try
+            set msgRecipients to (address of every to recipient of msg) as text
+          on error
+            set msgRecipients to ""
+          end try
+          try
+            set msgCcList to (address of every cc recipient of msg) as text
+          on error
+            set msgCcList to ""
+          end try
+          set AppleScript's text item delimiters to oldDelims
+          set end of outputLines to msgId & "${FIELD_DELIMITER}" & msgSubject & "${FIELD_DELIMITER}" & msgSender & "${FIELD_DELIMITER}" & msgRecipients & "${FIELD_DELIMITER}" & msgCcList & "${FIELD_DELIMITER}" & msgDate & "${FIELD_DELIMITER}" & msgRead & "${FIELD_DELIMITER}" & msgFlagged
         end if
       end repeat
       set oldDelims to AppleScript's text item delimiters
@@ -279,12 +314,15 @@ async function searchMailboxMessages(input: {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [id, subject, sender, dateReceived, readStatus, flagged] = line.split(FIELD_DELIMITER);
+      const [id, subject, sender, recipients = "", ccList = "", dateReceived, readStatus, flagged] =
+        line.split(FIELD_DELIMITER);
       return mapSummaryRecord(
         {
           id,
           subject,
           sender,
+          recipients,
+          ccList,
           dateReceived: dateReceived || null,
           readStatus: readStatus?.toLowerCase() === "true",
           flagged: flagged?.toLowerCase() === "true"
@@ -398,6 +436,15 @@ export async function getAppleMailRecentMessages(input: {
   });
 }
 
+export async function getAppleMailRecentMessagesFromFolder(folderPath: string, maxResults?: number) {
+  const target = parseFolderPath(folderPath);
+  return searchMailboxMessages({
+    accountName: target.accountName,
+    mailboxName: target.mailboxName,
+    maxResults
+  });
+}
+
 export async function searchAppleMailMessages(input: {
   query: string;
   folderPath?: string;
@@ -452,12 +499,22 @@ export async function getAppleMailMessageDetail(messageId: string, folderPath?: 
             set oldDelims to AppleScript's text item delimiters
             set AppleScript's text item delimiters to "${LIST_DELIMITER}"
             try
+              set msgRecipients to (address of every to recipient of msg) as text
+            on error
+              set msgRecipients to ""
+            end try
+            try
+              set msgCcList to (address of every cc recipient of msg) as text
+            on error
+              set msgCcList to ""
+            end try
+            try
               set attachmentNames to (name of every mail attachment of msg) as text
             on error
               set attachmentNames to ""
             end try
             set AppleScript's text item delimiters to oldDelims
-            set headerText to accName & "${FIELD_DELIMITER}" & mbName & "${FIELD_DELIMITER}" & msgId & "${FIELD_DELIMITER}" & msgSubject & "${FIELD_DELIMITER}" & msgSender & "${FIELD_DELIMITER}" & msgDate & "${FIELD_DELIMITER}" & msgRead & "${FIELD_DELIMITER}" & msgFlagged & "${FIELD_DELIMITER}" & attachmentNames
+            set headerText to accName & "${FIELD_DELIMITER}" & mbName & "${FIELD_DELIMITER}" & msgId & "${FIELD_DELIMITER}" & msgSubject & "${FIELD_DELIMITER}" & msgSender & "${FIELD_DELIMITER}" & msgRecipients & "${FIELD_DELIMITER}" & msgCcList & "${FIELD_DELIMITER}" & msgDate & "${FIELD_DELIMITER}" & msgRead & "${FIELD_DELIMITER}" & msgFlagged & "${FIELD_DELIMITER}" & attachmentNames
             return headerText & "${DETAIL_DELIMITER}" & (content of msg as text)
           end tell
         `;
@@ -479,12 +536,22 @@ export async function getAppleMailMessageDetail(messageId: string, folderPath?: 
                 set oldDelims to AppleScript's text item delimiters
                 set AppleScript's text item delimiters to "${LIST_DELIMITER}"
                 try
+                  set msgRecipients to (address of every to recipient of msg) as text
+                on error
+                  set msgRecipients to ""
+                end try
+                try
+                  set msgCcList to (address of every cc recipient of msg) as text
+                on error
+                  set msgCcList to ""
+                end try
+                try
                   set attachmentNames to (name of every mail attachment of msg) as text
                 on error
                   set attachmentNames to ""
                 end try
                 set AppleScript's text item delimiters to oldDelims
-                set headerText to accName & "${FIELD_DELIMITER}" & mbName & "${FIELD_DELIMITER}" & msgId & "${FIELD_DELIMITER}" & msgSubject & "${FIELD_DELIMITER}" & msgSender & "${FIELD_DELIMITER}" & msgDate & "${FIELD_DELIMITER}" & msgRead & "${FIELD_DELIMITER}" & msgFlagged & "${FIELD_DELIMITER}" & attachmentNames
+                set headerText to accName & "${FIELD_DELIMITER}" & mbName & "${FIELD_DELIMITER}" & msgId & "${FIELD_DELIMITER}" & msgSubject & "${FIELD_DELIMITER}" & msgSender & "${FIELD_DELIMITER}" & msgRecipients & "${FIELD_DELIMITER}" & msgCcList & "${FIELD_DELIMITER}" & msgDate & "${FIELD_DELIMITER}" & msgRead & "${FIELD_DELIMITER}" & msgFlagged & "${FIELD_DELIMITER}" & attachmentNames
                 return headerText & "${DETAIL_DELIMITER}" & (content of msg as text)
               end try
             end repeat
@@ -495,8 +562,19 @@ export async function getAppleMailMessageDetail(messageId: string, folderPath?: 
 
   const output = await runAppleScript(script);
   const [header, body = ""] = output.split(DETAIL_DELIMITER);
-  const [accountName, mailboxName, id, subject, sender, dateReceived, readStatus, flagged, attachmentNames = ""] =
-    header.split(FIELD_DELIMITER);
+  const [
+    accountName,
+    mailboxName,
+    id,
+    subject,
+    sender,
+    recipients = "",
+    ccList = "",
+    dateReceived,
+    readStatus,
+    flagged,
+    attachmentNames = ""
+  ] = header.split(FIELD_DELIMITER);
 
   const attachments = attachmentNames
     .split(LIST_DELIMITER)
@@ -512,7 +590,8 @@ export async function getAppleMailMessageDetail(messageId: string, folderPath?: 
     id,
     subject: subject || "(no subject)",
     author: sender || "Unknown sender",
-    recipients: accountName,
+    recipients: recipients || accountName,
+    ccList: ccList || undefined,
     date: dateReceived || null,
     folder: mailboxName,
     folderPath: encodeFolderPath(accountName, mailboxName),
@@ -536,4 +615,140 @@ export async function getAppleMailMessageDetail(messageId: string, folderPath?: 
     bodyIsHtml: false,
     attachments
   } satisfies AppleMailMessageDetail;
+}
+
+export async function getAppleMailRecentMessagesForSync(input: {
+  folderPath?: string;
+  maxResults?: number;
+  accountId?: string;
+}) {
+  const accounts = await listAccountsRaw();
+  const fallbackAccount = input.accountId
+    ? accounts.find((account) => account.name === input.accountId)
+    : accounts[0];
+
+  if (!fallbackAccount) {
+    return [];
+  }
+
+  const target = input.folderPath
+    ? parseFolderPath(input.folderPath)
+    : {
+        accountName: fallbackAccount.name,
+        mailboxName: "Inbox"
+      };
+
+  const safeAccountName = escapeAppleScriptString(target.accountName);
+  const safeMailboxName = escapeAppleScriptString(target.mailboxName);
+  const limit = Math.max(1, Math.min(input.maxResults ?? 60, 120));
+
+  const script = `
+    tell application "Mail"
+      set accountRef to account "${safeAccountName}"
+      set mailboxRef to mailbox "${safeMailboxName}" of accountRef
+      set sourceMessages to messages of mailboxRef
+      set totalMessages to count of sourceMessages
+      set outputLines to {}
+      repeat with idx from totalMessages to 1 by -1
+        if (count of outputLines) >= ${limit} then exit repeat
+        set msg to item idx of sourceMessages
+        set msgId to id of msg as text
+        set msgSubject to subject of msg as text
+        set msgSender to sender of msg as text
+        set msgDate to date received of msg as text
+        set msgRead to read status of msg as text
+        set msgFlagged to flagged status of msg as text
+        set oldDelims to AppleScript's text item delimiters
+        set AppleScript's text item delimiters to "${LIST_DELIMITER}"
+        try
+          set msgRecipients to (address of every to recipient of msg) as text
+        on error
+          set msgRecipients to ""
+        end try
+        try
+          set msgCcList to (address of every cc recipient of msg) as text
+        on error
+          set msgCcList to ""
+        end try
+        try
+          set attachmentNames to (name of every mail attachment of msg) as text
+        on error
+          set attachmentNames to ""
+        end try
+        set AppleScript's text item delimiters to oldDelims
+        set headerText to "${safeAccountName}" & "${FIELD_DELIMITER}" & "${safeMailboxName}" & "${FIELD_DELIMITER}" & msgId & "${FIELD_DELIMITER}" & msgSubject & "${FIELD_DELIMITER}" & msgSender & "${FIELD_DELIMITER}" & msgRecipients & "${FIELD_DELIMITER}" & msgCcList & "${FIELD_DELIMITER}" & msgDate & "${FIELD_DELIMITER}" & msgRead & "${FIELD_DELIMITER}" & msgFlagged & "${FIELD_DELIMITER}" & attachmentNames
+        set end of outputLines to headerText & "${DETAIL_DELIMITER}" & (content of msg as text)
+      end repeat
+      set oldDelims to AppleScript's text item delimiters
+      set AppleScript's text item delimiters to "${RECORD_DELIMITER}"
+      set finalOutput to outputLines as text
+      set AppleScript's text item delimiters to oldDelims
+      return finalOutput
+    end tell
+  `;
+
+  const output = await runAppleScript(script);
+  if (!output) {
+    return [];
+  }
+
+  return output
+    .split(RECORD_DELIMITER)
+    .filter(Boolean)
+    .map((record) => {
+      const [header, body = ""] = record.split(DETAIL_DELIMITER);
+      const [
+        accountName,
+        mailboxName,
+        id,
+        subject,
+        sender,
+        recipients = "",
+        ccList = "",
+        dateReceived,
+        readStatus,
+        flagged,
+        attachmentNames = ""
+      ] = header.split(FIELD_DELIMITER);
+
+      const attachments = attachmentNames
+        .split(LIST_DELIMITER)
+        .map((name) => name.trim())
+        .filter(Boolean)
+        .map((name) => ({
+          name,
+          contentType: "application/octet-stream",
+          size: null
+        }));
+
+      return {
+        id,
+        subject: subject || "(no subject)",
+        author: sender || "Unknown sender",
+        recipients: recipients || accountName,
+        ccList: ccList || undefined,
+        date: dateReceived || null,
+        folder: mailboxName,
+        folderPath: encodeFolderPath(accountName, mailboxName),
+        read: readStatus?.toLowerCase() === "true",
+        flagged: flagged?.toLowerCase() === "true",
+        accountId: accountName,
+        accountName,
+        serverType: "apple-mail",
+        folderType: mapMailboxType(mailboxName),
+        messageKey: null,
+        threadId: null,
+        threadParent: null,
+        references: [],
+        inReplyTo: null,
+        size: null,
+        lineCount: body ? body.split("\n").length : 0,
+        priority: null,
+        keywords: "",
+        charset: null,
+        body,
+        bodyIsHtml: false,
+        attachments
+      } satisfies AppleMailSyncMessage;
+    });
 }

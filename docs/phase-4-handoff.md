@@ -48,7 +48,7 @@ That field should support:
   - Groq API
   - Anthropic API
   - OpenRouter
-- `OAuth-connected assistant`
+- `Companion assistant`
   Examples:
   - `ChatGPT`
   - `Codex`
@@ -106,10 +106,11 @@ The next likely UI moves are:
 - `/settings/models`, `/settings/accounts`, and `/settings/workflows` now exist as routed pages
 - settings now persist through the local API and database
 - `Settings -> Models` now includes `Model source for enrichment`
-- `Local provider`, `Cloud API token`, and `OAuth-connected assistant` categories are now supported
+- `Local provider`, `Cloud API token`, and `Companion assistant` categories are now modeled in settings
 - deterministic analytics remain explicitly separate from selected model routing
 - `/mail` now turns shortcut hints into real keyboard actions for search, list movement, composer focus, and escape-to-reset behavior
 - `/mail` now defaults to a unified queue across imported mailboxes, with explicit `All`, `Personal`, and `Shared` scope controls
+- Apple Mail now has a first-class structured ingest bridge that creates `APPLE_MAIL` accounts/mailboxes in the graph from recent Mail.app summaries, so `/mail`, `/threads`, and `/workbench` no longer stay empty when Apple Mail is the active local source
 - the thread reader now exposes an assistant workbench with routed model context, deterministic thread briefing data, and grounded draft variants
 - the reader and command palette now expose first-pass triage actions for read state, archive, follow-up scheduling, and Settings navigation
 
@@ -139,7 +140,7 @@ What to work on next:
 4. Support these model-source categories:
    - Local provider: LM Studio, Ollama, and compatible local endpoints
    - Cloud API token: OpenAI API, Groq API, Anthropic API, OpenRouter, etc.
-   - OAuth-connected assistant: ChatGPT / Codex or similar when feasible
+   - Companion assistant: ChatGPT / Codex or similar as a future companion integration when feasible
 5. Preserve the rule that deterministic analytics do not depend on the selected model
 6. Keep refining /mail toward a Superhuman-like interaction model while adding Settings
 

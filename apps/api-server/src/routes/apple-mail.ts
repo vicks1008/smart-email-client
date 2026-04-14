@@ -2,9 +2,12 @@ import {
   getAppleMailMessageDetail,
   getAppleMailRecentMessages,
   getAppleMailStatus,
+  ingestAppleMailAccountSummariesIntoWorkbench,
   listAppleMailAccounts,
   listAppleMailFolders,
-  searchAppleMailMessages
+  searchAppleMailMessages,
+  syncAllAppleMailAccountsIntoWorkbench,
+  syncAppleMailAccountIntoWorkbench
 } from "@smart-email/core";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -100,6 +103,108 @@ export async function registerAppleMailRoutes(app: FastifyInstance) {
     } catch (error) {
       return reply.status(503).send({
         error: error instanceof Error ? error.message : "Apple Mail message detail is not available."
+      });
+    }
+  });
+
+  app.post("/v1/apple-mail/sync", async (request, reply) => {
+    const body = z
+      .object({
+        accountId: z.string().min(1),
+        maxMessagesPerFolder: z.coerce.number().int().min(1).max(250).optional()
+      })
+      .parse(request.body ?? {});
+
+    try {
+      return {
+        syncs: await syncAppleMailAccountIntoWorkbench({
+          appleMailAccountId: body.accountId,
+          maxMessagesPerFolder: body.maxMessagesPerFolder
+        })
+      };
+    } catch (error) {
+      return reply.status(503).send({
+        error: error instanceof Error ? error.message : "Apple Mail sync failed."
+      });
+    }
+  });
+
+  app.post("/v1/apple-mail/sync-all", async (request, reply) => {
+    const body = z
+      .object({
+        maxMessagesPerFolder: z.coerce.number().int().min(1).max(250).optional()
+      })
+      .parse(request.body ?? {});
+
+    try {
+      return {
+        syncs: await syncAllAppleMailAccountsIntoWorkbench({
+          maxMessagesPerFolder: body.maxMessagesPerFolder
+        })
+      };
+    } catch (error) {
+      return reply.status(503).send({
+        error: error instanceof Error ? error.message : "Apple Mail sync failed."
+      });
+    }
+  });
+
+  app.post("/v1/apple-mail/ingest", async (request, reply) => {
+    const body = z
+      .object({
+        account: z.object({
+          id: z.string().min(1),
+          name: z.string().min(1),
+          type: z.string().min(1),
+          identities: z.array(
+            z.object({
+              id: z.string().min(1),
+              email: z.string().min(1),
+              name: z.string().min(1),
+              isDefault: z.boolean()
+            })
+          )
+        }),
+        folders: z.array(
+          z.object({
+            name: z.string().min(1),
+            path: z.string().min(1),
+            type: z.string().min(1),
+            accountId: z.string().min(1),
+            totalMessages: z.number().int(),
+            unreadMessages: z.number().int(),
+            depth: z.number().int()
+          })
+        ),
+        messagesByFolder: z.array(
+          z.object({
+            folderPath: z.string().min(1),
+            messages: z.array(
+              z.object({
+                id: z.string().min(1),
+                subject: z.string(),
+                author: z.string(),
+                recipients: z.string(),
+                ccList: z.string().optional(),
+                date: z.string().nullable(),
+                folder: z.string(),
+                folderPath: z.string().min(1),
+                read: z.boolean(),
+                flagged: z.boolean()
+              })
+            )
+          })
+        )
+      })
+      .parse(request.body);
+
+    try {
+      return {
+        syncs: await ingestAppleMailAccountSummariesIntoWorkbench(body)
+      };
+    } catch (error) {
+      return reply.status(503).send({
+        error: error instanceof Error ? error.message : "Apple Mail ingest failed."
       });
     }
   });
