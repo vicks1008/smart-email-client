@@ -168,7 +168,7 @@ On macOS, Apple Mail is now the most practical zero-admin live source. First-par
 
 ## Apple Mail Live Source
 
-The app now supports a local Apple Mail route by reading Mail.app on this Mac through Automation. That live surface is paired with a structured summary-ingest path so `/mail` can seed the deterministic mailbox graph without Azure consent or Outlook Web scraping.
+The app now supports a local Apple Mail route by reading Mail.app on this Mac through Automation. That live surface is paired with a structured ingest path that does two things: seed `/mail` quickly from the newest messages, then continue background backfill in batches so the deterministic mailbox graph can grow toward a full local index without blocking the first paint.
 
 Local setup on this machine:
 
@@ -188,7 +188,7 @@ On first access, macOS may prompt for:
 - `System Settings` -> `Privacy & Security` -> `Automation`
 - allow your terminal or desktop app to control `Mail`
 
-Then open `/mail`. If Mail.app is open and syncing, the app can browse live mail immediately and seed the structured queue from recent Apple Mail summaries without a separate sign-in helper.
+Then open `/mail`. If Mail.app is open and syncing, the app can browse live mail immediately, seed the structured queue from recent Apple Mail summaries, and continue indexing older Inbox and Sent messages in the background without a separate sign-in helper.
 
 The upstream `apple-mail-mcp` repo is bundled locally in `tools/apple-mail-mcp`, but the app currently uses the in-repo Apple Mail adapter for live browse plus summary ingest because it is more stable than the upstream mailbox listing/search output for this MVP slice.
 

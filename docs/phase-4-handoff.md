@@ -111,6 +111,7 @@ The next likely UI moves are:
 - `/mail` now turns shortcut hints into real keyboard actions for search, list movement, composer focus, and escape-to-reset behavior
 - `/mail` now defaults to a unified queue across imported mailboxes, with explicit `All`, `Personal`, and `Shared` scope controls
 - Apple Mail now has a first-class structured ingest bridge that creates `APPLE_MAIL` accounts/mailboxes in the graph from recent Mail.app summaries, so `/mail`, `/threads`, and `/workbench` no longer stay empty when Apple Mail is the active local source
+- Apple Mail indexing now starts with a fast recent seed and continues with background mailbox backfill, so the structured queue can move beyond the initial slice and trend toward a full local index in a more Superhuman-like way
 - the thread reader now exposes an assistant workbench with routed model context, deterministic thread briefing data, and grounded draft variants
 - the reader and command palette now expose first-pass triage actions for read state, archive, follow-up scheduling, and Settings navigation
 

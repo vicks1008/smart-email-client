@@ -1,4 +1,6 @@
 import {
+  backfillPersistedAppleMailAccountIntoWorkbench,
+  getAppleMailMessageWindow,
   getAppleMailMessageDetail,
   getAppleMailRecentMessages,
   getAppleMailStatus,
@@ -64,6 +66,26 @@ export async function registerAppleMailRoutes(app: FastifyInstance) {
     } catch (error) {
       return reply.status(503).send({
         error: error instanceof Error ? error.message : "Apple Mail recent messages are not available."
+      });
+    }
+  });
+
+  app.get("/v1/apple-mail/messages/window", async (request, reply) => {
+    const query = z
+      .object({
+        folderPath: z.string().optional(),
+        maxResults: z.coerce.number().int().min(1).max(250).optional(),
+        accountId: z.string().optional(),
+        recentDays: z.coerce.number().int().min(1).max(3650).optional(),
+        startIndex: z.coerce.number().int().min(1).optional()
+      })
+      .parse(request.query);
+
+    try {
+      return await getAppleMailMessageWindow(query);
+    } catch (error) {
+      return reply.status(503).send({
+        error: error instanceof Error ? error.message : "Apple Mail mailbox window is not available."
       });
     }
   });
@@ -210,6 +232,23 @@ export async function registerAppleMailRoutes(app: FastifyInstance) {
     } catch (error) {
       return reply.status(503).send({
         error: error instanceof Error ? error.message : "Apple Mail ingest failed."
+      });
+    }
+  });
+
+  app.post("/v1/apple-mail/backfill", async (request, reply) => {
+    const body = z
+      .object({
+        accountId: z.string().min(1),
+        batchSize: z.coerce.number().int().min(1).max(250).optional()
+      })
+      .parse(request.body ?? {});
+
+    try {
+      return await backfillPersistedAppleMailAccountIntoWorkbench(body);
+    } catch (error) {
+      return reply.status(503).send({
+        error: error instanceof Error ? error.message : "Apple Mail backfill failed."
       });
     }
   });

@@ -43,6 +43,7 @@ import {
 import { toast } from "sonner";
 
 import {
+  backfillAppleMailAccount,
   addSharedMailbox,
   createThreadFollowUp,
   fetchAccounts,
@@ -68,6 +69,7 @@ import {
   syncThunderbirdMailbox,
   uploadArchive,
   type AccountSummary,
+  type AppleMailBackfillResult,
   type AppleMailAccount as ThunderbirdAccount,
   type AppleMailFolder as ThunderbirdFolder,
   type AppleMailMessageDetail as ThunderbirdMessageDetail,
@@ -365,6 +367,22 @@ function appleMailFoldersForStructuredSync(folders: ThunderbirdFolder[]) {
   return folders.filter((folder) => folder.type === "inbox" || folder.type === "sent" || (folder.type === "custom" && folder.name.includes("@")));
 }
 
+function summarizeAppleMailBackfill(result: AppleMailBackfillResult) {
+  const indexedMessages = result.syncs.reduce(
+    (total, sync) => total + sync.folders.reduce((folderTotal, folder) => folderTotal + folder.importedMessages, 0),
+    0
+  );
+  const totalMessages = result.syncs.reduce(
+    (total, sync) => total + sync.folders.reduce((folderTotal, folder) => folderTotal + folder.totalMessages, 0),
+    0
+  );
+
+  return {
+    indexedMessages,
+    totalMessages
+  };
+}
+
 function normalizeCommandText(value: string) {
   return value
     .toLowerCase()
@@ -440,9 +458,26 @@ export function MailApp() {
   const [hasAttemptedInitialAppleSync, setHasAttemptedInitialAppleSync] = useState(false);
   const [hasAttemptedAppleWorkspaceRecovery, setHasAttemptedAppleWorkspaceRecovery] = useState(false);
   const [hasLoadedThreadsOnce, setHasLoadedThreadsOnce] = useState(false);
+  const [appleMailBackfill, setAppleMailBackfill] = useState<{
+    status: "idle" | "running" | "complete" | "error";
+    indexedMessages: number;
+    totalMessages: number;
+    importedThisSession: number;
+    hasMore: boolean;
+    error: string | null;
+  }>({
+    status: "idle",
+    indexedMessages: 0,
+    totalMessages: 0,
+    importedThisSession: 0,
+    hasMore: false,
+    error: null
+  });
   const searchInputRef = useRef<HTMLInputElement>(null);
   const draftPadRef = useRef<HTMLTextAreaElement>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const appleMailBackfillRunIdRef = useRef(0);
+  const appleMailBackfillActiveRef = useRef(false);
 
   const deferredSearch = useDeferredValue(search);
 
@@ -457,6 +492,10 @@ export function MailApp() {
   const selectedThunderbirdAccount = useMemo(
     () => thunderbirdAccounts.find((account) => account.id === selectedThunderbirdAccountId) ?? null,
     [thunderbirdAccounts, selectedThunderbirdAccountId]
+  );
+  const persistedAppleMailAccount = useMemo(
+    () => accounts.find((account) => account.provider === "APPLE_MAIL") ?? null,
+    [accounts]
   );
   const appleMailMailboxIds = useMemo(
     () =>
@@ -485,6 +524,25 @@ export function MailApp() {
       newestThreadTime
     };
   }, [appleMailMailboxIds, threads]);
+  const appleMailTargetMessageCount = useMemo(
+    () => appleMailFoldersForStructuredSync(thunderbirdFolders).reduce((total, folder) => total + folder.totalMessages, 0),
+    [thunderbirdFolders]
+  );
+  const appleMailIndexedMessages = useMemo(
+    () =>
+      persistedAppleMailAccount?.mailboxes.reduce((total, mailbox) => total + mailbox._count.messages, 0) ?? 0,
+    [persistedAppleMailAccount]
+  );
+  const appleMailProgressTotal = Math.max(appleMailBackfill.totalMessages, appleMailTargetMessageCount);
+  const appleMailProgressIndexed = Math.max(appleMailBackfill.indexedMessages, appleMailIndexedMessages);
+  const appleMailProgressLabel =
+    appleMailProgressTotal > 0
+      ? appleMailBackfill.status === "running"
+        ? `Indexing ${appleMailProgressIndexed}/${appleMailProgressTotal}`
+        : appleMailProgressIndexed < appleMailProgressTotal
+          ? `Indexed ${appleMailProgressIndexed}/${appleMailProgressTotal}`
+          : `Indexed ${appleMailProgressIndexed}`
+      : null;
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -544,6 +602,30 @@ export function MailApp() {
   }, [accounts.length, hasAttemptedInitialAppleSync, loading, startSyncTransition, thunderbirdAccounts.length, thunderbirdStatus]);
 
   useEffect(() => {
+    if (appleMailBackfill.status === "running") {
+      return;
+    }
+
+    if (appleMailProgressTotal > 0 && appleMailProgressIndexed >= appleMailProgressTotal) {
+      setAppleMailBackfill((current) => ({
+        ...current,
+        status: "complete",
+        indexedMessages: appleMailProgressIndexed,
+        totalMessages: appleMailProgressTotal,
+        hasMore: false,
+        error: null
+      }));
+      return;
+    }
+
+    setAppleMailBackfill((current) => ({
+      ...current,
+      indexedMessages: Math.max(current.indexedMessages, appleMailProgressIndexed),
+      totalMessages: Math.max(current.totalMessages, appleMailProgressTotal)
+    }));
+  }, [appleMailBackfill.status, appleMailProgressIndexed, appleMailProgressTotal]);
+
+  useEffect(() => {
     if (loading || !hasLoadedThreadsOnce || hasAttemptedAppleWorkspaceRecovery) {
       return;
     }
@@ -589,6 +671,28 @@ export function MailApp() {
     loading,
     startSyncTransition,
     thunderbirdAccounts.length,
+    thunderbirdStatus
+  ]);
+
+  useEffect(() => {
+    if (loading || !persistedAppleMailAccount || !thunderbirdStatus?.available) {
+      return;
+    }
+
+    if (appleMailBackfillActiveRef.current) {
+      return;
+    }
+
+    if (appleMailProgressTotal === 0 || appleMailProgressIndexed >= appleMailProgressTotal) {
+      return;
+    }
+
+    void runAppleMailBackfill(persistedAppleMailAccount.id, false);
+  }, [
+    appleMailProgressIndexed,
+    appleMailProgressTotal,
+    loading,
+    persistedAppleMailAccount,
     thunderbirdStatus
   ]);
 
@@ -854,6 +958,79 @@ export function MailApp() {
     };
   }
 
+  async function runAppleMailBackfill(accountId: string, announceCompletion: boolean) {
+    if (appleMailBackfillActiveRef.current) {
+      return;
+    }
+
+    appleMailBackfillActiveRef.current = true;
+    const runId = appleMailBackfillRunIdRef.current + 1;
+    appleMailBackfillRunIdRef.current = runId;
+    let importedThisSession = 0;
+
+    setAppleMailBackfill((current) => ({
+      ...current,
+      status: "running",
+      error: null
+    }));
+
+    try {
+      for (let iteration = 0; iteration < 200; iteration += 1) {
+        const result = await backfillAppleMailAccount({
+          accountId,
+          batchSize: 50
+        });
+
+        if (appleMailBackfillRunIdRef.current !== runId) {
+          return;
+        }
+
+        importedThisSession += result.totalImportedMessages;
+        const summary = summarizeAppleMailBackfill(result);
+
+        setAppleMailBackfill({
+          status: result.hasMore ? "running" : "complete",
+          indexedMessages: summary.indexedMessages,
+          totalMessages: summary.totalMessages,
+          importedThisSession,
+          hasMore: result.hasMore,
+          error: null
+        });
+
+        if (iteration === 0 || iteration % 3 === 2 || !result.hasMore) {
+          await refreshArchiveAccounts();
+          await refreshWorkbench(selectedMailboxId ?? undefined);
+          await refreshThreads(selectedMailboxId ?? undefined);
+        }
+
+        if (!result.hasMore) {
+          if (announceCompletion && importedThisSession > 0) {
+            toast.success(
+              `Indexed ${summary.indexedMessages} Apple Mail message${summary.indexedMessages === 1 ? "" : "s"} into the workspace.`
+            );
+          }
+          break;
+        }
+
+        if (result.totalImportedMessages === 0) {
+          throw new Error("Apple Mail indexing stalled before the mailbox finished backfilling.");
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to backfill Apple Mail.";
+      setAppleMailBackfill((current) => ({
+        ...current,
+        status: "error",
+        error: message
+      }));
+      toast.error(message);
+    } finally {
+      if (appleMailBackfillRunIdRef.current === runId) {
+        appleMailBackfillActiveRef.current = false;
+      }
+    }
+  }
+
   function applySuggestedDraft(variantId?: string) {
     if (!assistantData?.draftSuggestions.length) {
       return;
@@ -1020,11 +1197,12 @@ export function MailApp() {
               ? `Synced ${importedMessages} Apple Mail message${importedMessages === 1 ? "" : "s"} into the workspace.`
               : "Apple Mail sync completed."
           );
+          await refreshArchiveAccounts();
+          await runAppleMailBackfill(selectedAccount.id, true);
         } else {
           const result = await queueSync(selectedAccount.id);
           toast.success(`Queued ${result.queued} mailbox sync${result.queued === 1 ? "" : "s"}.`);
         }
-        await refreshArchiveAccounts();
         await refreshWorkbench(selectedMailboxId ?? undefined);
         await refreshThreads(selectedMailboxId ?? undefined);
       } catch (error) {
@@ -1707,6 +1885,7 @@ export function MailApp() {
                 <div className="utility-title-row">
                   <h2>{workspaceTitle}</h2>
                   {topbarContextLabel ? <span className="soft-tag">{topbarContextLabel}</span> : null}
+                  {workspaceView === "inbox" && appleMailProgressLabel ? <span className="soft-tag">{appleMailProgressLabel}</span> : null}
                 </div>
               </div>
             ) : (

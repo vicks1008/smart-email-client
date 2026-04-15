@@ -35,6 +35,8 @@ export {
 } from "./analytics";
 export { applyThreadIntelligence, inferMailboxRole, rebuildIntelligence } from "./intelligence";
 export {
+  getAppleMailMessageWindow,
+  getAppleMailMessageWindowFromFolder,
   getAppleMailMessageDetail,
   getAppleMailRecentMessages,
   getAppleMailRecentMessagesFromFolder,
@@ -46,13 +48,16 @@ export {
   type AppleMailFolder,
   type AppleMailMessageDetail,
   type AppleMailMessageSummary,
+  type AppleMailMessageWindow,
   type AppleMailStatus
 } from "./apple-mail";
 export {
+  backfillPersistedAppleMailAccountIntoWorkbench,
   ingestAppleMailAccountSummariesIntoWorkbench,
   syncAllAppleMailAccountsIntoWorkbench,
   syncAppleMailAccountIntoWorkbench,
   syncPersistedAppleMailAccountIntoWorkbench,
+  type AppleMailBackfillResult,
   type AppleMailSummaryIngestPayload,
   type AppleMailSyncResult
 } from "./apple-mail-sync";

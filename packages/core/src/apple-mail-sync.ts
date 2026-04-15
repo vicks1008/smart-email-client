@@ -1,6 +1,7 @@
 import { AccountProvider, AccountStatus, MailboxKind } from "@prisma/client";
 
 import {
+  getAppleMailMessageWindowFromFolder,
   getAppleMailRecentMessagesFromFolder,
   listAppleMailAccounts,
   listAppleMailFolders,
@@ -52,6 +53,36 @@ export type AppleMailSummaryIngestPayload = {
     folderPath: string;
     messages: AppleMailMessageSummary[];
   }>;
+};
+
+export type AppleMailBackfillResult = {
+  account: {
+    id: string;
+    email: string;
+    displayName: string | null;
+  };
+  syncs: Array<{
+    mailbox: {
+      id: string;
+      emailAddress: string;
+      displayName: string;
+      kind: "PRIMARY" | "SHARED";
+    };
+    importedMessages: number;
+    hasMore: boolean;
+    folders: Array<{
+      path: string;
+      name: string;
+      type: string;
+      totalMessages: number;
+      importedMessages: number;
+      importedThisBatch: number;
+      nextStartIndex: number | null;
+      unreadMessages: number;
+    }>;
+  }>;
+  totalImportedMessages: number;
+  hasMore: boolean;
 };
 
 function parseAppleMailSummaryDate(value?: string | null) {
@@ -580,6 +611,137 @@ async function syncAppleMailTargetMailboxFromSummaries(input: {
   }
 }
 
+async function importedCountForAppleMailFolder(mailboxId: string, folderPath: string) {
+  return prisma.message.count({
+    where: {
+      mailboxId,
+      externalMessageId: {
+        startsWith: `${folderPath}:`
+      }
+    }
+  });
+}
+
+async function backfillAppleMailTargetMailbox(input: {
+  accountRecord: Awaited<ReturnType<typeof ensureAppleMailAccountRecord>>;
+  target: AppleMailSyncTarget;
+  batchSize: number;
+}) {
+  const mailbox = await registerMailbox(input.accountRecord.id, {
+    emailAddress: input.target.mailboxEmail,
+    displayName: input.target.mailboxDisplayName,
+    kind: input.target.kind
+  });
+
+  const mailboxRecord = await prisma.mailbox.findUniqueOrThrow({
+    where: {
+      id: mailbox.id
+    }
+  });
+
+  let importedMessages = 0;
+  let hasMore = false;
+  const folderProgress: AppleMailBackfillResult["syncs"][number]["folders"] = [];
+
+  try {
+    for (const folder of input.target.folders) {
+      const importedBeforeBatch = await importedCountForAppleMailFolder(mailbox.id, folder.path);
+      const totalMessages = Math.max(folder.totalMessages, importedBeforeBatch);
+
+      if (importedBeforeBatch >= totalMessages) {
+        folderProgress.push({
+          path: folder.path,
+          name: folder.name,
+          type: folder.type,
+          totalMessages,
+          importedMessages: importedBeforeBatch,
+          importedThisBatch: 0,
+          nextStartIndex: null,
+          unreadMessages: folder.unreadMessages
+        });
+        continue;
+      }
+
+      const window = await getAppleMailMessageWindowFromFolder(folder.path, {
+        startIndex: importedBeforeBatch + 1,
+        maxResults: input.batchSize
+      });
+
+      for (const summary of window.messages) {
+        await ingestNormalizedMessage(
+          mailboxRecord,
+          normalizedMessageFromAppleMail({
+            summary,
+            folderType: folder.type,
+            mailboxEmail: input.target.mailboxEmail,
+            mailboxName: input.target.mailboxDisplayName
+          })
+        );
+      }
+
+      const importedAfterBatch = await importedCountForAppleMailFolder(mailbox.id, folder.path);
+      const importedThisBatch = Math.max(0, importedAfterBatch - importedBeforeBatch);
+      const folderHasMore = importedAfterBatch < window.totalMessages;
+
+      importedMessages += importedThisBatch;
+      hasMore = hasMore || folderHasMore;
+
+      folderProgress.push({
+        path: folder.path,
+        name: folder.name,
+        type: folder.type,
+        totalMessages: window.totalMessages,
+        importedMessages: importedAfterBatch,
+        importedThisBatch,
+        nextStartIndex: folderHasMore ? importedAfterBatch + 1 : null,
+        unreadMessages: folder.unreadMessages
+      });
+    }
+
+    await refreshUnreadCounts(mailbox.id);
+    await prisma.thread.deleteMany({
+      where: {
+        mailboxId: mailbox.id,
+        messages: {
+          none: {}
+        }
+      }
+    });
+    await prisma.mailbox.update({
+      where: {
+        id: mailbox.id
+      },
+      data: {
+        lastSyncedAt: new Date(),
+        lastSyncError: null
+      }
+    });
+
+    return {
+      mailbox: {
+        id: mailbox.id,
+        emailAddress: mailbox.emailAddress,
+        displayName: mailbox.displayName,
+        kind: mailbox.kind
+      },
+      importedMessages,
+      hasMore,
+      folders: folderProgress
+    } satisfies AppleMailBackfillResult["syncs"][number];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Apple Mail backfill failed.";
+    await prisma.mailbox.update({
+      where: {
+        id: mailbox.id
+      },
+      data: {
+        lastSyncError: message
+      }
+    });
+    throw error;
+  }
+}
+
 export async function syncAppleMailAccountIntoWorkbench(input: {
   appleMailAccountId: string;
   maxMessagesPerFolder?: number;
@@ -681,4 +843,61 @@ export async function ingestAppleMailAccountSummariesIntoWorkbench(input: AppleM
   }
 
   return results;
+}
+
+export async function backfillPersistedAppleMailAccountIntoWorkbench(input: {
+  accountId: string;
+  batchSize?: number;
+}) {
+  const account = await prisma.account.findUnique({
+    where: {
+      id: input.accountId
+    }
+  });
+
+  if (!account || account.provider !== AccountProvider.APPLE_MAIL) {
+    throw new Error("Apple Mail account was not found.");
+  }
+
+  const accounts = await listAppleMailAccounts();
+  const appleMailAccount = accounts.find((entry) => entry.id === account.externalUserId);
+
+  if (!appleMailAccount) {
+    throw new Error("Apple Mail account is no longer available in Mail.app.");
+  }
+
+  const folders = await listAppleMailFolders(appleMailAccount.id);
+  const targets = selectSyncTargets(appleMailAccount, folders);
+
+  if (targets.length === 0) {
+    throw new Error("No Apple Mail inboxes or shared mailbox folders were found to backfill.");
+  }
+
+  const accountRecord = await ensureAppleMailAccountRecord(appleMailAccount);
+  const syncs = [];
+  let totalImportedMessages = 0;
+  let hasMore = false;
+
+  for (const target of targets) {
+    const sync = await backfillAppleMailTargetMailbox({
+      accountRecord,
+      target,
+      batchSize: Math.max(1, Math.min(input.batchSize ?? 100, 250))
+    });
+
+    syncs.push(sync);
+    totalImportedMessages += sync.importedMessages;
+    hasMore = hasMore || sync.hasMore;
+  }
+
+  return {
+    account: {
+      id: accountRecord.id,
+      email: accountRecord.email,
+      displayName: accountRecord.displayName
+    },
+    syncs,
+    totalImportedMessages,
+    hasMore
+  } satisfies AppleMailBackfillResult;
 }

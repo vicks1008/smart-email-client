@@ -452,6 +452,36 @@ export type AppleMailSyncResult = {
   }>;
 };
 
+export type AppleMailBackfillResult = {
+  account: {
+    id: string;
+    email: string;
+    displayName: string | null;
+  };
+  syncs: Array<{
+    mailbox: {
+      id: string;
+      emailAddress: string;
+      displayName: string;
+      kind: "PRIMARY" | "SHARED";
+    };
+    importedMessages: number;
+    hasMore: boolean;
+    folders: Array<{
+      path: string;
+      name: string;
+      type: string;
+      totalMessages: number;
+      importedMessages: number;
+      importedThisBatch: number;
+      nextStartIndex: number | null;
+      unreadMessages: number;
+    }>;
+  }>;
+  totalImportedMessages: number;
+  hasMore: boolean;
+};
+
 export type ThunderbirdStatus = {
   available: boolean;
   profilePaths: string[];
@@ -828,6 +858,46 @@ export async function fetchAppleMailRecentMessages(folderPath?: string, accountI
   return apiFetch<{ messages: AppleMailMessageSummary[] }>(`/v1/apple-mail/messages/recent?${params.toString()}`);
 }
 
+export async function fetchAppleMailMessageWindow(input: {
+  folderPath?: string;
+  accountId?: string;
+  recentDays?: number;
+  startIndex?: number;
+  maxResults?: number;
+}) {
+  const params = new URLSearchParams();
+
+  if (input.folderPath) {
+    params.set("folderPath", input.folderPath);
+  }
+
+  if (input.accountId) {
+    params.set("accountId", input.accountId);
+  }
+
+  if (input.recentDays) {
+    params.set("recentDays", String(input.recentDays));
+  }
+
+  if (input.startIndex) {
+    params.set("startIndex", String(input.startIndex));
+  }
+
+  if (input.maxResults) {
+    params.set("maxResults", String(input.maxResults));
+  }
+
+  return apiFetch<{
+    accountId: string;
+    folderPath: string;
+    totalMessages: number;
+    startIndex: number;
+    endIndex: number;
+    nextStartIndex: number | null;
+    messages: AppleMailMessageSummary[];
+  }>(`/v1/apple-mail/messages/window?${params.toString()}`);
+}
+
 export async function fetchAppleMailMessage(messageId: string, folderPath?: string) {
   const params = new URLSearchParams({
     messageId
@@ -858,6 +928,16 @@ export async function syncAllAppleMailAccounts(payload?: {
   return apiFetch<AppleMailSyncResult>("/v1/apple-mail/sync-all", {
     method: "POST",
     body: JSON.stringify(payload ?? {})
+  });
+}
+
+export async function backfillAppleMailAccount(payload: {
+  accountId: string;
+  batchSize?: number;
+}) {
+  return apiFetch<AppleMailBackfillResult>("/v1/apple-mail/backfill", {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 

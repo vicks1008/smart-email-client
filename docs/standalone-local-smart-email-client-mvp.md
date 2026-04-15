@@ -66,7 +66,7 @@ Use a layered approach:
 
 1. `Mailbox layer`
    Apple Mail, Microsoft Graph, Thunderbird, and archive import
-   Apple Mail on macOS should support both live browse/read and a lightweight structured ingest so the deterministic queue is never empty when Mail.app is already configured locally
+   Apple Mail on macOS should support both live browse/read and a structured ingest that seeds the newest mail first, then backfills older mailbox history in the background so the deterministic queue can behave like a real indexed desktop client
 2. `Deterministic intelligence layer`
    organizations, contacts, categories, reply-state, follow-up tasks, and activity analytics
 3. `Model layer`

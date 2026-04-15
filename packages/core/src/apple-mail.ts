@@ -54,6 +54,16 @@ export type AppleMailMessageSummary = {
   flagged: boolean;
 };
 
+export type AppleMailMessageWindow = {
+  accountId: string;
+  folderPath: string;
+  totalMessages: number;
+  startIndex: number;
+  endIndex: number;
+  nextStartIndex: number | null;
+  messages: AppleMailMessageSummary[];
+};
+
 export type AppleMailMessageDetail = AppleMailMessageSummary & {
   accountId: string | null;
   accountName: string | null;
@@ -194,7 +204,8 @@ async function listMailboxesRaw(accountName: string) {
       repeat with mb in mailboxes of accountRef
         set mbName to name of mb as text
         set unreadCountText to unread count of mb as text
-        set end of outputLines to mbName & "${FIELD_DELIMITER}" & unreadCountText
+        set totalCountText to (count of messages of mb) as text
+        set end of outputLines to mbName & "${FIELD_DELIMITER}" & unreadCountText & "${FIELD_DELIMITER}" & totalCountText
       end repeat
       set oldDelims to AppleScript's text item delimiters
       set AppleScript's text item delimiters to linefeed
@@ -213,10 +224,11 @@ async function listMailboxesRaw(accountName: string) {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [name, unreadCount = "0"] = line.split(FIELD_DELIMITER);
+      const [name, unreadCount = "0", totalCount = "0"] = line.split(FIELD_DELIMITER);
       return {
         name: name.trim(),
-        unreadCount: Number.parseInt(unreadCount, 10) || 0
+        unreadCount: Number.parseInt(unreadCount, 10) || 0,
+        totalCount: Number.parseInt(totalCount, 10) || 0
       };
     });
 }
@@ -294,21 +306,22 @@ async function preferredMailboxName(accountName: string) {
   return preferred;
 }
 
-async function searchMailboxMessages(input: {
+async function readMailboxMessageWindow(input: {
   accountName: string;
   mailboxName: string;
   query?: string;
   maxResults?: number;
   recentDays?: number;
+  startIndex?: number;
 }) {
   const safeAccountName = escapeAppleScriptString(input.accountName);
   const safeMailboxName = escapeAppleScriptString(input.mailboxName);
   const safeQuery = escapeAppleScriptString(input.query?.trim() ?? "");
-  const limit = Math.max(1, Math.min(input.maxResults ?? 60, 100));
+  const limit = Math.max(1, Math.min(input.maxResults ?? 60, 250));
   const recentDays = input.recentDays ? Math.max(1, Math.min(input.recentDays, 3650)) : null;
   const scanMultiplier = safeQuery ? 25 : recentDays ? 12 : 4;
   const maxScanLimit = safeQuery ? 600 : recentDays ? 300 : 120;
-  const scanLimit = Math.max(limit, Math.min(limit * scanMultiplier, maxScanLimit));
+  const requestedStartIndex = Math.max(1, input.startIndex ?? 1);
   const recentSetup = recentDays
     ? `set cutoffDate to (current date) - (${recentDays} * days)`
     : "";
@@ -333,11 +346,26 @@ async function searchMailboxMessages(input: {
       set mailboxRef to mailbox "${safeMailboxName}" of accountRef
       ${recentSetup}
       set totalMessages to count of messages of mailboxRef
-      set sampleCount to totalMessages
-      if sampleCount > ${scanLimit} then set sampleCount to ${scanLimit}
+      if totalMessages is 0 then
+        return "__SMART_EMAIL_META__${FIELD_DELIMITER}0${FIELD_DELIMITER}0${FIELD_DELIMITER}0"
+      end if
+      set startIndex to ${requestedStartIndex}
+      if startIndex > totalMessages then
+        return "__SMART_EMAIL_META__${FIELD_DELIMITER}" & totalMessages & "${FIELD_DELIMITER}" & (totalMessages + 1) & "${FIELD_DELIMITER}" & totalMessages
+      end if
+      set remainingMessages to totalMessages - startIndex + 1
+      set scanCount to remainingMessages
+      if ${safeQuery ? "true" : "false"} or ${recentDays ? "true" : "false"} then
+        set preferredScanCount to ${Math.max(limit, Math.min(limit * scanMultiplier, maxScanLimit))}
+        if scanCount > preferredScanCount then set scanCount to preferredScanCount
+      else
+        if scanCount > ${limit} then set scanCount to ${limit}
+      end if
+      set endIndex to startIndex + scanCount - 1
       set outputLines to {}
-      repeat with idx from 1 to sampleCount
-        if (count of outputLines) >= ${limit} then exit repeat
+      set end of outputLines to "__SMART_EMAIL_META__" & "${FIELD_DELIMITER}" & totalMessages & "${FIELD_DELIMITER}" & startIndex & "${FIELD_DELIMITER}" & endIndex
+      repeat with idx from startIndex to endIndex
+        if ((count of outputLines) - 1) >= ${limit} then exit repeat
         set msg to message idx of mailboxRef
         set msgDateValue to date received of msg
         ${cutoffCheck}
@@ -381,13 +409,26 @@ async function searchMailboxMessages(input: {
 
   const output = await runAppleScript(script);
   if (!output) {
-    return [];
+    return {
+      accountId: input.accountName,
+      folderPath: encodeFolderPath(input.accountName, input.mailboxName),
+      totalMessages: 0,
+      startIndex: requestedStartIndex,
+      endIndex: requestedStartIndex - 1,
+      nextStartIndex: null,
+      messages: []
+    } satisfies AppleMailMessageWindow;
   }
 
-  const records = output
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
+  const lines = output.split("\n").filter(Boolean);
+  const [metaLine, ...recordLines] = lines;
+  const [, totalMessagesText = "0", startIndexText = String(requestedStartIndex), endIndexText = String(requestedStartIndex - 1)] =
+    metaLine?.split(FIELD_DELIMITER) ?? [];
+  const totalMessages = Number.parseInt(totalMessagesText, 10) || 0;
+  const startIndex = Number.parseInt(startIndexText, 10) || requestedStartIndex;
+  const endIndex = Number.parseInt(endIndexText, 10) || startIndex - 1;
+
+  const records = recordLines.map((line) => {
       const [id, subject, sender, recipients = "", ccList = "", dateReceived, readStatus, flagged] =
         line.split(FIELD_DELIMITER);
       return mapSummaryRecord(
@@ -406,7 +447,30 @@ async function searchMailboxMessages(input: {
       );
     });
 
-  return sortAppleMailSummariesNewestFirst(records, limit);
+  const messages = sortAppleMailSummariesNewestFirst(records, limit);
+  const nextStartIndex = endIndex < totalMessages ? endIndex + 1 : null;
+
+  return {
+    accountId: input.accountName,
+    folderPath: encodeFolderPath(input.accountName, input.mailboxName),
+    totalMessages,
+    startIndex,
+    endIndex,
+    nextStartIndex,
+    messages
+  } satisfies AppleMailMessageWindow;
+}
+
+async function searchMailboxMessages(input: {
+  accountName: string;
+  mailboxName: string;
+  query?: string;
+  maxResults?: number;
+  recentDays?: number;
+  startIndex?: number;
+}) {
+  const window = await readMailboxMessageWindow(input);
+  return window.messages;
 }
 
 export async function getAppleMailStatus(): Promise<AppleMailStatus> {
@@ -477,18 +541,19 @@ export async function listAppleMailFolders(accountId?: string) {
       path: encodeFolderPath(account.name, folder.name),
       type: mapMailboxType(folder.name),
       accountId: account.name,
-      totalMessages: 0,
+      totalMessages: folder.totalCount,
       unreadMessages: folder.unreadCount,
       depth: 0
     }))
   ) satisfies AppleMailFolder[];
 }
 
-export async function getAppleMailRecentMessages(input: {
+export async function getAppleMailMessageWindow(input: {
   folderPath?: string;
   maxResults?: number;
   accountId?: string;
   recentDays?: number;
+  startIndex?: number;
 }) {
   const accounts = await listAccountsRaw();
   const fallbackAccount = input.accountId
@@ -496,7 +561,15 @@ export async function getAppleMailRecentMessages(input: {
     : accounts[0];
 
   if (!fallbackAccount) {
-    return [];
+    return {
+      accountId: "",
+      folderPath: "",
+      totalMessages: 0,
+      startIndex: 1,
+      endIndex: 0,
+      nextStartIndex: null,
+      messages: []
+    } satisfies AppleMailMessageWindow;
   }
 
   const target = input.folderPath
@@ -506,21 +579,47 @@ export async function getAppleMailRecentMessages(input: {
         mailboxName: await preferredMailboxName(fallbackAccount.name)
       };
 
-  return searchMailboxMessages({
+  return readMailboxMessageWindow({
     accountName: target.accountName,
     mailboxName: target.mailboxName,
     maxResults: input.maxResults,
-    recentDays: input.recentDays
+    recentDays: input.recentDays,
+    startIndex: input.startIndex
   });
 }
 
+export async function getAppleMailRecentMessages(input: {
+  folderPath?: string;
+  maxResults?: number;
+  accountId?: string;
+  recentDays?: number;
+}) {
+  const window = await getAppleMailMessageWindow(input);
+  return window.messages;
+}
+
 export async function getAppleMailRecentMessagesFromFolder(folderPath: string, maxResults?: number, recentDays?: number) {
-  const target = parseFolderPath(folderPath);
-  return searchMailboxMessages({
-    accountName: target.accountName,
-    mailboxName: target.mailboxName,
+  const window = await getAppleMailMessageWindow({
+    folderPath,
     maxResults,
     recentDays
+  });
+  return window.messages;
+}
+
+export async function getAppleMailMessageWindowFromFolder(
+  folderPath: string,
+  input?: {
+    maxResults?: number;
+    recentDays?: number;
+    startIndex?: number;
+  }
+) {
+  return getAppleMailMessageWindow({
+    folderPath,
+    maxResults: input?.maxResults,
+    recentDays: input?.recentDays,
+    startIndex: input?.startIndex
   });
 }
 
