@@ -843,6 +843,7 @@ export async function fetchAppleMailMessage(messageId: string, folderPath?: stri
 export async function syncAppleMailAccount(payload: {
   accountId: string;
   maxMessagesPerFolder?: number;
+  recentDays?: number;
 }) {
   return apiFetch<AppleMailSyncResult>("/v1/apple-mail/sync", {
     method: "POST",
@@ -852,6 +853,7 @@ export async function syncAppleMailAccount(payload: {
 
 export async function syncAllAppleMailAccounts(payload?: {
   maxMessagesPerFolder?: number;
+  recentDays?: number;
 }) {
   return apiFetch<AppleMailSyncResult>("/v1/apple-mail/sync-all", {
     method: "POST",

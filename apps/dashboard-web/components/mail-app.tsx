@@ -438,6 +438,8 @@ export function MailApp() {
   const [isThunderbirdImportPending, startThunderbirdImportTransition] = useTransition();
   const [isThunderbirdBulkImportPending, startThunderbirdBulkImportTransition] = useTransition();
   const [hasAttemptedInitialAppleSync, setHasAttemptedInitialAppleSync] = useState(false);
+  const [hasAttemptedAppleWorkspaceRecovery, setHasAttemptedAppleWorkspaceRecovery] = useState(false);
+  const [hasLoadedThreadsOnce, setHasLoadedThreadsOnce] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const draftPadRef = useRef<HTMLTextAreaElement>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -456,6 +458,33 @@ export function MailApp() {
     () => thunderbirdAccounts.find((account) => account.id === selectedThunderbirdAccountId) ?? null,
     [thunderbirdAccounts, selectedThunderbirdAccountId]
   );
+  const appleMailMailboxIds = useMemo(
+    () =>
+      new Set(
+        accounts
+          .filter((account) => account.provider === "APPLE_MAIL")
+          .flatMap((account) => account.mailboxes.map((mailbox) => mailbox.id))
+      ),
+    [accounts]
+  );
+  const appleMailThreadStats = useMemo(() => {
+    let count = 0;
+    let newestThreadTime = Number.NEGATIVE_INFINITY;
+
+    for (const thread of threads) {
+      if (!appleMailMailboxIds.has(thread.mailboxId)) {
+        continue;
+      }
+
+      count += 1;
+      newestThreadTime = Math.max(newestThreadTime, new Date(thread.lastMessageAt).getTime());
+    }
+
+    return {
+      count,
+      newestThreadTime
+    };
+  }, [appleMailMailboxIds, threads]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -498,7 +527,7 @@ export function MailApp() {
     setHasAttemptedInitialAppleSync(true);
     startSyncTransition(async () => {
       try {
-        const result = await syncLiveAppleMailIntoWorkspace(12, null, 120);
+        const result = await syncLiveAppleMailIntoWorkspace(25, null, 365);
         const importedMessages = result.syncs.reduce((total, sync) => total + sync.importedMessages, 0);
         toast.success(
           importedMessages > 0
@@ -513,6 +542,55 @@ export function MailApp() {
       }
     });
   }, [accounts.length, hasAttemptedInitialAppleSync, loading, startSyncTransition, thunderbirdAccounts.length, thunderbirdStatus]);
+
+  useEffect(() => {
+    if (loading || !hasLoadedThreadsOnce || hasAttemptedAppleWorkspaceRecovery) {
+      return;
+    }
+
+    if (!thunderbirdStatus?.available || thunderbirdAccounts.length === 0 || accounts.length === 0) {
+      return;
+    }
+
+    const newestThreadAgeMs = Date.now() - appleMailThreadStats.newestThreadTime;
+    const isWorkspaceMissingAppleMail = appleMailMailboxIds.size === 0 || appleMailThreadStats.count === 0;
+    const isWorkspaceStale =
+      Number.isFinite(appleMailThreadStats.newestThreadTime) &&
+      newestThreadAgeMs > 14 * 24 * 60 * 60 * 1000;
+
+    if (!isWorkspaceMissingAppleMail && !isWorkspaceStale) {
+      return;
+    }
+
+    setHasAttemptedAppleWorkspaceRecovery(true);
+    startSyncTransition(async () => {
+      try {
+        const result = await syncLiveAppleMailIntoWorkspace(25, null, 365);
+        const importedMessages = result.syncs.reduce((total, sync) => total + sync.importedMessages, 0);
+        toast.success(
+          importedMessages > 0
+            ? `Refreshed ${importedMessages} recent Apple Mail message${importedMessages === 1 ? "" : "s"} into the workspace.`
+            : "Apple Mail recovery ran, but there were no newer messages to ingest."
+        );
+        await refreshArchiveAccounts();
+        await refreshWorkbench();
+        await refreshThreads();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to refresh the Apple Mail workspace.");
+      }
+    });
+  }, [
+    accounts.length,
+    appleMailMailboxIds.size,
+    appleMailThreadStats.count,
+    appleMailThreadStats.newestThreadTime,
+    hasAttemptedAppleWorkspaceRecovery,
+    hasLoadedThreadsOnce,
+    loading,
+    startSyncTransition,
+    thunderbirdAccounts.length,
+    thunderbirdStatus
+  ]);
 
   useEffect(() => {
     if (!selectedThunderbirdAccountId) {
@@ -732,7 +810,7 @@ export function MailApp() {
     ]);
   }
 
-  async function ingestLiveAppleMailAccount(account: ThunderbirdAccount, maxMessagesPerFolder = 12, recentDays = 120) {
+  async function ingestLiveAppleMailAccount(account: ThunderbirdAccount, maxMessagesPerFolder = 25, recentDays = 365) {
     const foldersData = await fetchThunderbirdFolders(account.id);
     const targetFolders = appleMailFoldersForStructuredSync(foldersData.folders);
     const messagesByFolder: Array<{ folderPath: string; messages: ThunderbirdMessageSummary[] }> = [];
@@ -753,9 +831,9 @@ export function MailApp() {
   }
 
   async function syncLiveAppleMailIntoWorkspace(
-    maxMessagesPerFolder = 12,
+    maxMessagesPerFolder = 25,
     preferredAccountEmail?: string | null,
-    recentDays = 120
+    recentDays = 365
   ) {
     const normalizedPreferredEmail = preferredAccountEmail?.trim().toLowerCase() ?? "";
     const candidateAccounts = normalizedPreferredEmail
@@ -876,6 +954,8 @@ export function MailApp() {
       setThreads(data.threads);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load threads.");
+    } finally {
+      setHasLoadedThreadsOnce(true);
     }
   }
 
@@ -933,7 +1013,7 @@ export function MailApp() {
     startSyncTransition(async () => {
       try {
         if (selectedAccount.provider === "APPLE_MAIL") {
-          const result = await syncLiveAppleMailIntoWorkspace(12, selectedAccount.email, 120);
+          const result = await syncLiveAppleMailIntoWorkspace(25, selectedAccount.email, 365);
           const importedMessages = result.syncs.reduce((total, sync) => total + sync.importedMessages, 0);
           toast.success(
             importedMessages > 0

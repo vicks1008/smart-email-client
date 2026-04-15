@@ -112,7 +112,8 @@ export async function registerAppleMailRoutes(app: FastifyInstance) {
     const body = z
       .object({
         accountId: z.string().min(1),
-        maxMessagesPerFolder: z.coerce.number().int().min(1).max(250).optional()
+        maxMessagesPerFolder: z.coerce.number().int().min(1).max(250).optional(),
+        recentDays: z.coerce.number().int().min(1).max(3650).optional()
       })
       .parse(request.body ?? {});
 
@@ -120,7 +121,8 @@ export async function registerAppleMailRoutes(app: FastifyInstance) {
       return {
         syncs: await syncAppleMailAccountIntoWorkbench({
           appleMailAccountId: body.accountId,
-          maxMessagesPerFolder: body.maxMessagesPerFolder
+          maxMessagesPerFolder: body.maxMessagesPerFolder,
+          recentDays: body.recentDays
         })
       };
     } catch (error) {
@@ -133,14 +135,16 @@ export async function registerAppleMailRoutes(app: FastifyInstance) {
   app.post("/v1/apple-mail/sync-all", async (request, reply) => {
     const body = z
       .object({
-        maxMessagesPerFolder: z.coerce.number().int().min(1).max(250).optional()
+        maxMessagesPerFolder: z.coerce.number().int().min(1).max(250).optional(),
+        recentDays: z.coerce.number().int().min(1).max(3650).optional()
       })
       .parse(request.body ?? {});
 
     try {
       return {
         syncs: await syncAllAppleMailAccountsIntoWorkbench({
-          maxMessagesPerFolder: body.maxMessagesPerFolder
+          maxMessagesPerFolder: body.maxMessagesPerFolder,
+          recentDays: body.recentDays
         })
       };
     } catch (error) {

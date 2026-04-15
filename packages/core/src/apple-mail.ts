@@ -249,13 +249,49 @@ function mapSummaryRecord(
   } satisfies AppleMailMessageSummary;
 }
 
-function parsedAppleMailTime(value: string | null | undefined) {
+function parseAppleMailDate(value: string | null | undefined) {
   if (!value) {
-    return Number.NEGATIVE_INFINITY;
+    return null;
   }
 
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+  const normalized = value
+    .replace(/\u202f|\u00a0/g, " ")
+    .replace(/\s+at\s+/i, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const candidates = [normalized, normalized.replace(/^[A-Za-z]+,\s*/, "")];
+
+  for (const candidate of candidates) {
+    const parsed = new Date(candidate);
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function parsedAppleMailTime(value: string | null | undefined) {
+  return parseAppleMailDate(value)?.getTime() ?? Number.NEGATIVE_INFINITY;
+}
+
+function sortAppleMailSummariesNewestFirst(messages: AppleMailMessageSummary[], limit?: number) {
+  const ordered = [...messages].sort((left, right) => parsedAppleMailTime(right.date) - parsedAppleMailTime(left.date));
+  return typeof limit === "number" ? ordered.slice(0, limit) : ordered;
+}
+
+async function preferredMailboxName(accountName: string) {
+  const mailboxes = await listMailboxesRaw(accountName);
+  const preferred =
+    mailboxes.find((mailbox) => mapMailboxType(mailbox.name) === "inbox")?.name ??
+    mailboxes.find((mailbox) => mailbox.name.trim().toLowerCase() === "inbox")?.name ??
+    mailboxes[0]?.name;
+
+  if (!preferred) {
+    throw new Error(`No mailboxes were found for Apple Mail account "${accountName}".`);
+  }
+
+  return preferred;
 }
 
 async function searchMailboxMessages(input: {
@@ -270,34 +306,52 @@ async function searchMailboxMessages(input: {
   const safeQuery = escapeAppleScriptString(input.query?.trim() ?? "");
   const limit = Math.max(1, Math.min(input.maxResults ?? 60, 100));
   const recentDays = input.recentDays ? Math.max(1, Math.min(input.recentDays, 3650)) : null;
-
-  const condition = safeQuery
-    ? `(subject of msg contains "${safeQuery}" or sender of msg contains "${safeQuery}")`
-    : "true";
+  const scanMultiplier = safeQuery ? 25 : recentDays ? 12 : 4;
+  const maxScanLimit = safeQuery ? 600 : recentDays ? 300 : 120;
+  const scanLimit = Math.max(limit, Math.min(limit * scanMultiplier, maxScanLimit));
   const recentSetup = recentDays
     ? `set cutoffDate to (current date) - (${recentDays} * days)`
     : "";
-  const sourceMessagesExpression = recentDays
-    ? "messages of mailboxRef whose date received is greater than or equal to cutoffDate"
-    : "messages of mailboxRef";
-  const recentCondition = recentDays ? " and msgDateValue is greater than or equal to cutoffDate" : "";
+  const queryCheck = safeQuery
+    ? `
+        if msgSubject does not contain "${safeQuery}" and msgSender does not contain "${safeQuery}" then
+          set matchesQuery to false
+        else
+          set matchesQuery to true
+        end if
+      `
+    : "set matchesQuery to true";
+  const cutoffCheck = recentDays
+    ? `
+        if msgDateValue is less than cutoffDate then exit repeat
+      `
+    : "";
 
   const script = `
     tell application "Mail"
       set accountRef to account "${safeAccountName}"
       set mailboxRef to mailbox "${safeMailboxName}" of accountRef
       ${recentSetup}
-      set sourceMessages to ${sourceMessagesExpression}
-      set totalMessages to count of sourceMessages
+      set totalMessages to count of messages of mailboxRef
+      set sampleCount to totalMessages
+      if sampleCount > ${scanLimit} then set sampleCount to ${scanLimit}
       set outputLines to {}
-      repeat with idx from totalMessages to 1 by -1
+      repeat with idx from 1 to sampleCount
         if (count of outputLines) >= ${limit} then exit repeat
-        set msg to item idx of sourceMessages
+        set msg to message idx of mailboxRef
         set msgDateValue to date received of msg
-        if ${condition}${recentCondition} then
-          set msgId to id of msg as text
+        ${cutoffCheck}
+        set msgSubject to ""
+        set msgSender to ""
+        try
           set msgSubject to subject of msg as text
+        end try
+        try
           set msgSender to sender of msg as text
+        end try
+        ${queryCheck}
+        if matchesQuery then
+          set msgId to id of msg as text
           set msgDate to msgDateValue as text
           set msgRead to read status of msg as text
           set msgFlagged to flagged status of msg as text
@@ -352,13 +406,7 @@ async function searchMailboxMessages(input: {
       );
     });
 
-  if (!recentDays) {
-    return records;
-  }
-
-  return records
-    .sort((left, right) => parsedAppleMailTime(right.date) - parsedAppleMailTime(left.date))
-    .slice(0, limit);
+  return sortAppleMailSummariesNewestFirst(records, limit);
 }
 
 export async function getAppleMailStatus(): Promise<AppleMailStatus> {
@@ -455,7 +503,7 @@ export async function getAppleMailRecentMessages(input: {
     ? parseFolderPath(input.folderPath)
     : {
         accountName: fallbackAccount.name,
-        mailboxName: "Inbox"
+        mailboxName: await preferredMailboxName(fallbackAccount.name)
       };
 
   return searchMailboxMessages({
@@ -495,7 +543,7 @@ export async function searchAppleMailMessages(input: {
     ? parseFolderPath(input.folderPath)
     : {
         accountName: fallbackAccount.name,
-        mailboxName: "Inbox"
+        mailboxName: await preferredMailboxName(fallbackAccount.name)
       };
 
   return searchMailboxMessages({
@@ -652,6 +700,7 @@ export async function getAppleMailRecentMessagesForSync(input: {
   folderPath?: string;
   maxResults?: number;
   accountId?: string;
+  recentDays?: number;
 }) {
   const accounts = await listAccountsRaw();
   const fallbackAccount = input.accountId
@@ -666,120 +715,16 @@ export async function getAppleMailRecentMessagesForSync(input: {
     ? parseFolderPath(input.folderPath)
     : {
         accountName: fallbackAccount.name,
-        mailboxName: "Inbox"
+        mailboxName: await preferredMailboxName(fallbackAccount.name)
       };
+  const summaries = await searchMailboxMessages({
+    accountName: target.accountName,
+    mailboxName: target.mailboxName,
+    maxResults: input.maxResults,
+    recentDays: input.recentDays
+  });
 
-  const safeAccountName = escapeAppleScriptString(target.accountName);
-  const safeMailboxName = escapeAppleScriptString(target.mailboxName);
-  const limit = Math.max(1, Math.min(input.maxResults ?? 60, 120));
-
-  const script = `
-    tell application "Mail"
-      set accountRef to account "${safeAccountName}"
-      set mailboxRef to mailbox "${safeMailboxName}" of accountRef
-      set sourceMessages to messages of mailboxRef
-      set totalMessages to count of sourceMessages
-      set outputLines to {}
-      repeat with idx from totalMessages to 1 by -1
-        if (count of outputLines) >= ${limit} then exit repeat
-        set msg to item idx of sourceMessages
-        set msgId to id of msg as text
-        set msgSubject to subject of msg as text
-        set msgSender to sender of msg as text
-        set msgDate to date received of msg as text
-        set msgRead to read status of msg as text
-        set msgFlagged to flagged status of msg as text
-        set oldDelims to AppleScript's text item delimiters
-        set AppleScript's text item delimiters to "${LIST_DELIMITER}"
-        try
-          set msgRecipients to (address of every to recipient of msg) as text
-        on error
-          set msgRecipients to ""
-        end try
-        try
-          set msgCcList to (address of every cc recipient of msg) as text
-        on error
-          set msgCcList to ""
-        end try
-        try
-          set attachmentNames to (name of every mail attachment of msg) as text
-        on error
-          set attachmentNames to ""
-        end try
-        set AppleScript's text item delimiters to oldDelims
-        set headerText to "${safeAccountName}" & "${FIELD_DELIMITER}" & "${safeMailboxName}" & "${FIELD_DELIMITER}" & msgId & "${FIELD_DELIMITER}" & msgSubject & "${FIELD_DELIMITER}" & msgSender & "${FIELD_DELIMITER}" & msgRecipients & "${FIELD_DELIMITER}" & msgCcList & "${FIELD_DELIMITER}" & msgDate & "${FIELD_DELIMITER}" & msgRead & "${FIELD_DELIMITER}" & msgFlagged & "${FIELD_DELIMITER}" & attachmentNames
-        set end of outputLines to headerText & "${DETAIL_DELIMITER}" & (content of msg as text)
-      end repeat
-      set oldDelims to AppleScript's text item delimiters
-      set AppleScript's text item delimiters to "${RECORD_DELIMITER}"
-      set finalOutput to outputLines as text
-      set AppleScript's text item delimiters to oldDelims
-      return finalOutput
-    end tell
-  `;
-
-  const output = await runAppleScript(script);
-  if (!output) {
-    return [];
-  }
-
-  return output
-    .split(RECORD_DELIMITER)
-    .filter(Boolean)
-    .map((record) => {
-      const [header, body = ""] = record.split(DETAIL_DELIMITER);
-      const [
-        accountName,
-        mailboxName,
-        id,
-        subject,
-        sender,
-        recipients = "",
-        ccList = "",
-        dateReceived,
-        readStatus,
-        flagged,
-        attachmentNames = ""
-      ] = header.split(FIELD_DELIMITER);
-
-      const attachments = attachmentNames
-        .split(LIST_DELIMITER)
-        .map((name) => name.trim())
-        .filter(Boolean)
-        .map((name) => ({
-          name,
-          contentType: "application/octet-stream",
-          size: null
-        }));
-
-      return {
-        id,
-        subject: subject || "(no subject)",
-        author: sender || "Unknown sender",
-        recipients: recipients || accountName,
-        ccList: ccList || undefined,
-        date: dateReceived || null,
-        folder: mailboxName,
-        folderPath: encodeFolderPath(accountName, mailboxName),
-        read: readStatus?.toLowerCase() === "true",
-        flagged: flagged?.toLowerCase() === "true",
-        accountId: accountName,
-        accountName,
-        serverType: "apple-mail",
-        folderType: mapMailboxType(mailboxName),
-        messageKey: null,
-        threadId: null,
-        threadParent: null,
-        references: [],
-        inReplyTo: null,
-        size: null,
-        lineCount: body ? body.split("\n").length : 0,
-        priority: null,
-        keywords: "",
-        charset: null,
-        body,
-        bodyIsHtml: false,
-        attachments
-      } satisfies AppleMailSyncMessage;
-    });
+  return Promise.all(
+    summaries.map((summary) => getAppleMailMessageDetail(summary.id, summary.folderPath))
+  );
 }

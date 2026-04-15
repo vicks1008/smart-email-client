@@ -54,6 +54,36 @@ export type AppleMailSummaryIngestPayload = {
   }>;
 };
 
+function parseAppleMailSummaryDate(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value
+    .replace(/\u202f|\u00a0/g, " ")
+    .replace(/\s+at\s+/i, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const candidates = [normalized, normalized.replace(/^[A-Za-z]+,\s*/, "")];
+
+  for (const candidate of candidates) {
+    const parsed = new Date(candidate);
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function appleMailSummaryTime(value?: string | null) {
+  return parseAppleMailSummaryDate(value)?.getTime() ?? Number.NEGATIVE_INFINITY;
+}
+
+function sortAppleMailSummariesNewestFirst<T extends { date?: string | null }>(summaries: T[]) {
+  return [...summaries].sort((left, right) => appleMailSummaryTime(right.date) - appleMailSummaryTime(left.date));
+}
+
 function normalizeAddress(value?: string | null) {
   return value?.trim().toLowerCase() ?? "";
 }
@@ -263,8 +293,7 @@ function normalizedMessageFromAppleMail(input: {
       : null;
   const from = firstAddress(input.summary.author, fallbackSender?.address, fallbackSender?.name);
   const subject = input.summary.subject?.trim() || "(no subject)";
-  const parsedDate = input.summary.date ? new Date(input.summary.date) : new Date();
-  const receivedAt = Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+  const receivedAt = parseAppleMailSummaryDate(input.summary.date) ?? new Date();
   const bodyText = "Imported summary from Apple Mail. Open the Apple Mail live view for full message content.";
 
   return {
@@ -358,6 +387,7 @@ async function syncAppleMailTargetMailbox(input: {
   accountRecord: Awaited<ReturnType<typeof ensureAppleMailAccountRecord>>;
   target: AppleMailSyncTarget;
   maxMessagesPerFolder: number;
+  recentDays?: number;
 }) {
   const mailbox = await registerMailbox(input.accountRecord.id, {
     emailAddress: input.target.mailboxEmail,
@@ -376,15 +406,12 @@ async function syncAppleMailTargetMailbox(input: {
 
   try {
     for (const folder of input.target.folders) {
-      const summaries = await getAppleMailRecentMessagesFromFolder(folder.path, input.maxMessagesPerFolder);
-      const ordered = [...summaries].sort((left, right) => {
-        const leftTime = new Date(left.date ?? 0).getTime();
-        const rightTime = new Date(right.date ?? 0).getTime();
-        return leftTime - rightTime;
-      });
+      const summaries = sortAppleMailSummariesNewestFirst(
+        await getAppleMailRecentMessagesFromFolder(folder.path, input.maxMessagesPerFolder, input.recentDays)
+      );
 
       let importedForFolder = 0;
-      for (const summary of ordered) {
+      for (const summary of summaries) {
         await ingestNormalizedMessage(
           mailboxRecord,
           normalizedMessageFromAppleMail({
@@ -478,11 +505,7 @@ async function syncAppleMailTargetMailboxFromSummaries(input: {
 
   try {
     for (const folder of input.target.folders) {
-      const summaries = [...(input.messagesByFolder.get(folder.path) ?? [])].sort((left, right) => {
-        const leftTime = new Date(left.date ?? 0).getTime();
-        const rightTime = new Date(right.date ?? 0).getTime();
-        return leftTime - rightTime;
-      });
+      const summaries = sortAppleMailSummariesNewestFirst(input.messagesByFolder.get(folder.path) ?? []);
 
       let importedForFolder = 0;
       for (const summary of summaries) {
@@ -560,6 +583,7 @@ async function syncAppleMailTargetMailboxFromSummaries(input: {
 export async function syncAppleMailAccountIntoWorkbench(input: {
   appleMailAccountId: string;
   maxMessagesPerFolder?: number;
+  recentDays?: number;
 }) {
   const accounts = await listAppleMailAccounts();
   const appleMailAccount = accounts.find((account) => account.id === input.appleMailAccountId);
@@ -584,7 +608,8 @@ export async function syncAppleMailAccountIntoWorkbench(input: {
         account: appleMailAccount,
         accountRecord,
         target,
-        maxMessagesPerFolder: input.maxMessagesPerFolder ?? 3
+        maxMessagesPerFolder: input.maxMessagesPerFolder ?? 25,
+        recentDays: input.recentDays ?? 365
       })
     );
   }
@@ -594,6 +619,7 @@ export async function syncAppleMailAccountIntoWorkbench(input: {
 
 export async function syncAllAppleMailAccountsIntoWorkbench(input?: {
   maxMessagesPerFolder?: number;
+  recentDays?: number;
 }) {
   const accounts = await listAppleMailAccounts();
   const results: AppleMailSyncResult[] = [];
@@ -602,7 +628,8 @@ export async function syncAllAppleMailAccountsIntoWorkbench(input?: {
     results.push(
       ...(await syncAppleMailAccountIntoWorkbench({
         appleMailAccountId: account.id,
-        maxMessagesPerFolder: input?.maxMessagesPerFolder ?? 3
+        maxMessagesPerFolder: input?.maxMessagesPerFolder ?? 25,
+        recentDays: input?.recentDays ?? 365
       }))
     );
   }
@@ -613,6 +640,7 @@ export async function syncAllAppleMailAccountsIntoWorkbench(input?: {
 export async function syncPersistedAppleMailAccountIntoWorkbench(input: {
   accountId: string;
   maxMessagesPerFolder?: number;
+  recentDays?: number;
 }) {
   const account = await prisma.account.findUnique({
     where: {
@@ -626,7 +654,8 @@ export async function syncPersistedAppleMailAccountIntoWorkbench(input: {
 
   return syncAppleMailAccountIntoWorkbench({
     appleMailAccountId: account.externalUserId,
-    maxMessagesPerFolder: input.maxMessagesPerFolder ?? 3
+    maxMessagesPerFolder: input.maxMessagesPerFolder ?? 25,
+    recentDays: input.recentDays ?? 365
   });
 }
 
