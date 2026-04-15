@@ -249,36 +249,56 @@ function mapSummaryRecord(
   } satisfies AppleMailMessageSummary;
 }
 
+function parsedAppleMailTime(value: string | null | undefined) {
+  if (!value) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
 async function searchMailboxMessages(input: {
   accountName: string;
   mailboxName: string;
   query?: string;
   maxResults?: number;
+  recentDays?: number;
 }) {
   const safeAccountName = escapeAppleScriptString(input.accountName);
   const safeMailboxName = escapeAppleScriptString(input.mailboxName);
   const safeQuery = escapeAppleScriptString(input.query?.trim() ?? "");
   const limit = Math.max(1, Math.min(input.maxResults ?? 60, 100));
+  const recentDays = input.recentDays ? Math.max(1, Math.min(input.recentDays, 3650)) : null;
 
   const condition = safeQuery
     ? `(subject of msg contains "${safeQuery}" or sender of msg contains "${safeQuery}")`
     : "true";
+  const recentSetup = recentDays
+    ? `set cutoffDate to (current date) - (${recentDays} * days)`
+    : "";
+  const sourceMessagesExpression = recentDays
+    ? "messages of mailboxRef whose date received is greater than or equal to cutoffDate"
+    : "messages of mailboxRef";
+  const recentCondition = recentDays ? " and msgDateValue is greater than or equal to cutoffDate" : "";
 
   const script = `
     tell application "Mail"
       set accountRef to account "${safeAccountName}"
       set mailboxRef to mailbox "${safeMailboxName}" of accountRef
-      set sourceMessages to messages of mailboxRef
+      ${recentSetup}
+      set sourceMessages to ${sourceMessagesExpression}
       set totalMessages to count of sourceMessages
       set outputLines to {}
       repeat with idx from totalMessages to 1 by -1
         if (count of outputLines) >= ${limit} then exit repeat
         set msg to item idx of sourceMessages
-        if ${condition} then
+        set msgDateValue to date received of msg
+        if ${condition}${recentCondition} then
           set msgId to id of msg as text
           set msgSubject to subject of msg as text
           set msgSender to sender of msg as text
-          set msgDate to date received of msg as text
+          set msgDate to msgDateValue as text
           set msgRead to read status of msg as text
           set msgFlagged to flagged status of msg as text
           set oldDelims to AppleScript's text item delimiters
@@ -310,7 +330,7 @@ async function searchMailboxMessages(input: {
     return [];
   }
 
-  return output
+  const records = output
     .split("\n")
     .filter(Boolean)
     .map((line) => {
@@ -331,6 +351,14 @@ async function searchMailboxMessages(input: {
         input.mailboxName
       );
     });
+
+  if (!recentDays) {
+    return records;
+  }
+
+  return records
+    .sort((left, right) => parsedAppleMailTime(right.date) - parsedAppleMailTime(left.date))
+    .slice(0, limit);
 }
 
 export async function getAppleMailStatus(): Promise<AppleMailStatus> {
@@ -412,6 +440,7 @@ export async function getAppleMailRecentMessages(input: {
   folderPath?: string;
   maxResults?: number;
   accountId?: string;
+  recentDays?: number;
 }) {
   const accounts = await listAccountsRaw();
   const fallbackAccount = input.accountId
@@ -432,16 +461,18 @@ export async function getAppleMailRecentMessages(input: {
   return searchMailboxMessages({
     accountName: target.accountName,
     mailboxName: target.mailboxName,
-    maxResults: input.maxResults
+    maxResults: input.maxResults,
+    recentDays: input.recentDays
   });
 }
 
-export async function getAppleMailRecentMessagesFromFolder(folderPath: string, maxResults?: number) {
+export async function getAppleMailRecentMessagesFromFolder(folderPath: string, maxResults?: number, recentDays?: number) {
   const target = parseFolderPath(folderPath);
   return searchMailboxMessages({
     accountName: target.accountName,
     mailboxName: target.mailboxName,
-    maxResults
+    maxResults,
+    recentDays
   });
 }
 

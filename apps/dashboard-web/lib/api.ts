@@ -808,7 +808,7 @@ export async function fetchAppleMailFolders(accountId?: string) {
   return apiFetch<{ folders: AppleMailFolder[] }>(`/v1/apple-mail/folders${query}`);
 }
 
-export async function fetchAppleMailRecentMessages(folderPath?: string, accountId?: string) {
+export async function fetchAppleMailRecentMessages(folderPath?: string, accountId?: string, recentDays?: number) {
   const params = new URLSearchParams({
     maxResults: "60"
   });
@@ -819,6 +819,10 @@ export async function fetchAppleMailRecentMessages(folderPath?: string, accountI
 
   if (accountId) {
     params.set("accountId", accountId);
+  }
+
+  if (recentDays) {
+    params.set("recentDays", String(recentDays));
   }
 
   return apiFetch<{ messages: AppleMailMessageSummary[] }>(`/v1/apple-mail/messages/recent?${params.toString()}`);

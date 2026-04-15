@@ -52,7 +52,8 @@ export async function registerAppleMailRoutes(app: FastifyInstance) {
       .object({
         folderPath: z.string().optional(),
         maxResults: z.coerce.number().int().min(1).max(100).optional(),
-        accountId: z.string().optional()
+        accountId: z.string().optional(),
+        recentDays: z.coerce.number().int().min(1).max(3650).optional()
       })
       .parse(request.query);
 

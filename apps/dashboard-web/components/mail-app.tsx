@@ -389,7 +389,7 @@ function isEditableElement(target: EventTarget | null) {
 export function MailApp() {
   const router = useRouter();
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("inbox");
-  const [inboxQueue, setInboxQueue] = useState<InboxQueue>("needsReply");
+  const [inboxQueue, setInboxQueue] = useState<InboxQueue>("allThreads");
   const [mailboxScope, setMailboxScope] = useState<MailboxScope>("all");
   const [search, setSearch] = useState("");
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
@@ -498,7 +498,7 @@ export function MailApp() {
     setHasAttemptedInitialAppleSync(true);
     startSyncTransition(async () => {
       try {
-        const result = await syncLiveAppleMailIntoWorkspace(3);
+        const result = await syncLiveAppleMailIntoWorkspace(12, null, 120);
         const importedMessages = result.syncs.reduce((total, sync) => total + sync.importedMessages, 0);
         toast.success(
           importedMessages > 0
@@ -732,13 +732,13 @@ export function MailApp() {
     ]);
   }
 
-  async function ingestLiveAppleMailAccount(account: ThunderbirdAccount, maxMessagesPerFolder = 3) {
+  async function ingestLiveAppleMailAccount(account: ThunderbirdAccount, maxMessagesPerFolder = 12, recentDays = 120) {
     const foldersData = await fetchThunderbirdFolders(account.id);
     const targetFolders = appleMailFoldersForStructuredSync(foldersData.folders);
     const messagesByFolder: Array<{ folderPath: string; messages: ThunderbirdMessageSummary[] }> = [];
 
     for (const folder of targetFolders) {
-      const data = await fetchThunderbirdRecentMessages(folder.path, account.id);
+      const data = await fetchThunderbirdRecentMessages(folder.path, account.id, recentDays);
       messagesByFolder.push({
         folderPath: folder.path,
         messages: data.messages.slice(0, maxMessagesPerFolder)
@@ -752,7 +752,11 @@ export function MailApp() {
     });
   }
 
-  async function syncLiveAppleMailIntoWorkspace(maxMessagesPerFolder = 3, preferredAccountEmail?: string | null) {
+  async function syncLiveAppleMailIntoWorkspace(
+    maxMessagesPerFolder = 12,
+    preferredAccountEmail?: string | null,
+    recentDays = 120
+  ) {
     const normalizedPreferredEmail = preferredAccountEmail?.trim().toLowerCase() ?? "";
     const candidateAccounts = normalizedPreferredEmail
       ? thunderbirdAccounts.filter((account) =>
@@ -763,7 +767,7 @@ export function MailApp() {
     const syncs = [];
 
     for (const account of liveAccounts) {
-      const result = await ingestLiveAppleMailAccount(account, maxMessagesPerFolder);
+      const result = await ingestLiveAppleMailAccount(account, maxMessagesPerFolder, recentDays);
       syncs.push(...result.syncs);
     }
 
@@ -854,10 +858,7 @@ export function MailApp() {
         const currentAccountId = selectedAccountId ?? data.accounts[0]?.id ?? null;
         const nextAccount =
           data.accounts.find((account) => account.id === currentAccountId) ?? data.accounts[0] ?? null;
-        const nextMailboxId =
-          nextAccount?.mailboxes.find((mailbox) => mailbox.id === selectedMailboxId)?.id ??
-          nextAccount?.mailboxes[0]?.id ??
-          null;
+        const nextMailboxId = nextAccount?.mailboxes.find((mailbox) => mailbox.id === selectedMailboxId)?.id ?? null;
 
         setSelectedAccountId(nextAccount?.id ?? null);
         setSelectedMailboxId(nextMailboxId);
@@ -932,7 +933,7 @@ export function MailApp() {
     startSyncTransition(async () => {
       try {
         if (selectedAccount.provider === "APPLE_MAIL") {
-          const result = await syncLiveAppleMailIntoWorkspace(3, selectedAccount.email);
+          const result = await syncLiveAppleMailIntoWorkspace(12, selectedAccount.email, 120);
           const importedMessages = result.syncs.reduce((total, sync) => total + sync.importedMessages, 0);
           toast.success(
             importedMessages > 0
