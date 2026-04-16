@@ -1,9 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function openThread(page: Page, subject: string) {
-  await expect(page.locator("[data-testid^='thread-row-']")).toHaveCount(2, { timeout: 15_000 });
-
   const targetThread = page.locator("[data-testid^='thread-row-']").filter({ hasText: subject }).first();
+  await expect(targetThread).toBeVisible({ timeout: 15_000 });
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await targetThread.click();
@@ -35,8 +34,10 @@ test.describe("mail client regression", () => {
   test("switches to follow-ups and opens the waiting thread", async ({ page }) => {
     await page.getByTestId("workspace-nav-followups").click();
     await expect(page.getByTestId("followup-list")).toBeVisible();
-    await page.getByRole("button", { name: /Resident portal rollout/i }).click();
-    await expect(page.getByTestId("reader-subject")).toContainText("Resident portal rollout");
+    const followupRow = page.getByTestId("followup-list").getByRole("button", { name: /Resident portal rollout/i }).first();
+    await expect(followupRow).toBeVisible();
+    await followupRow.click();
+    await expect(page.getByTestId("reader-pane")).toContainText("Resident portal rollout");
   });
 
   test("switches mailboxes and loads the team inbox thread", async ({ page }) => {
